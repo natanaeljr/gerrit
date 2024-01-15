@@ -41,8 +41,9 @@ mod history;
 ///       ScrollDown until program invokation line will be required.
 ///       Clear all lines below it will be required.
 /// - [ ] Script as input to run automatically commands from a file
-///
-/// - [ ] In progress HISTORY up/down with on-going command restore on last down-arrow
+/// - [x] HISTORY up/down with on-going command restore on last down-arrow
+/// - [ ] Handle left/right arrows and prompt in-middle insert characters,
+///       prompt will have to shift the characters.
 ///
 fn main() -> std::io::Result<()> {
     terminal::enable_raw_mode()?;
@@ -54,7 +55,8 @@ fn main() -> std::io::Result<()> {
         stdout,
         Print("Gerrit command-line interface"),
         smart_new_line(1)
-    );
+    )
+    .unwrap();
 
     while !quit {
         print_gerrit_prefix(&mut stdout);
@@ -88,10 +90,11 @@ fn main() -> std::io::Result<()> {
                     PrintStyledContent("x".with(Color::Red)),
                     Print(" Unknown command"),
                     smart_new_line(1)
-                );
+                )
+                .unwrap();
             }
             _ => {
-                execute!(stdout, smart_new_line(1));
+                execute!(stdout, smart_new_line(1)).unwrap();
             }
         };
     }
@@ -102,7 +105,8 @@ fn main() -> std::io::Result<()> {
         PrintStyledContent("✓".with(Color::Green)),
         Print(" Done"),
         smart_new_line(1)
-    );
+    )
+    .unwrap();
     terminal::disable_raw_mode()?;
     stdout.flush()?;
     sleep(Duration::from_millis(50));
@@ -114,7 +118,7 @@ pub fn smart_new_line(num: u16) -> MoveToNextLine {
     let curr_row = crossterm::cursor::position().unwrap().1;
     let term_max_row = crossterm::terminal::size().unwrap().1 - 1;
     if curr_row == term_max_row {
-        execute!(stdout, ScrollUp(num), MoveUp(num));
+        execute!(stdout, ScrollUp(num), MoveUp(num)).unwrap();
     }
     MoveToNextLine(num)
 }
@@ -142,7 +146,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                 state: _,
             })) => {
                 if !prompt.is_empty() {
-                    let mut count: u16 = 0;
+                    let count: u16;
                     if modifiers == KeyModifiers::ALT {
                         if let Some(idx) = prompt.rfind(" ") {
                             // TODO: fix line wrap and overflow
@@ -156,7 +160,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                         prompt.pop();
                         count = 1;
                     }
-                    execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine));
+                    execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine)).unwrap();
                 }
             }
             // ENTER
@@ -178,7 +182,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                 modifiers: KeyModifiers::CONTROL,
                 state: _,
             })) => {
-                execute!(stdout, Print("^C"));
+                execute!(stdout, Print("^C")).unwrap();
                 return Ok(String::from("quit"));
             }
             // CTRL + D
@@ -188,7 +192,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                 modifiers: KeyModifiers::CONTROL,
                 state: _,
             })) => {
-                execute!(stdout, Print("^D"));
+                execute!(stdout, Print("^D")).unwrap();
                 return Ok(String::from("quit"));
             }
             // CTRL + L
@@ -215,9 +219,9 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                     }
                     prompt = up_next.clone();
                     if count > 0 {
-                        execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine),);
+                        execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine),).unwrap();
                     }
-                    execute!(stdout, Print(prompt.as_str()));
+                    execute!(stdout, Print(prompt.as_str())).unwrap();
                 }
             }
             // ARROW DOWN
@@ -231,19 +235,19 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                     let count = prompt.len() as u16;
                     prompt = down_next.clone();
                     if count > 0 {
-                        execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine));
+                        execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine)).unwrap();
                     }
-                    execute!(stdout, Print(prompt.as_str()));
+                    execute!(stdout, Print(prompt.as_str())).unwrap();
                 } else {
                     let count = prompt.len() as u16;
                     if count > 0 {
-                        execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine),);
+                        execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine),).unwrap();
                     }
                     if last_prompt.is_some() {
                         prompt = last_prompt.unwrap();
                         last_prompt = None;
                     }
-                    execute!(stdout, Print(prompt.as_str()));
+                    execute!(stdout, Print(prompt.as_str())).unwrap();
                 }
             }
             // CHARACTERS
@@ -253,7 +257,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                 modifiers: _,
                 state: _,
             })) => {
-                execute!(stdout, Print(c));
+                execute!(stdout, Print(c)).unwrap();
                 prompt.push(c);
             }
             // ANYTHING

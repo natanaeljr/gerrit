@@ -20,12 +20,20 @@ use crossterm::{execute, terminal};
 /// Next step:
 /// - [ ] Handle commands with Clap::App
 /// - [ ] Handle scroll when cursor is at last row of the terminal window
+/// - [ ] Command History
+/// - [ ] script as input to run automatically commands from a file
 
 fn main() -> std::io::Result<()> {
     terminal::enable_raw_mode()?;
 
     let mut stdout = stdout();
     let mut quit = false;
+
+    execute!(
+        stdout,
+        Print("Gerrit command-line interface"),
+        smart_new_line(1)
+    );
 
     while !quit {
         print_gerrit_prefix(&mut stdout);
@@ -34,8 +42,6 @@ fn main() -> std::io::Result<()> {
             "help" => execute!(
                 stdout,
                 smart_new_line(1),
-                Print("Gerrit command line interface"),
-                smart_new_line(2),
                 Print(" help"),
                 smart_new_line(1),
                 Print(" remote"),
@@ -109,12 +115,25 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Backspace,
                 kind: KeyEventKind::Press,
-                modifiers: _,
+                modifiers,
                 state: _,
             })) => {
                 if !string.is_empty() {
-                    execute!(stdout, MoveLeft(1), Clear(ClearType::UntilNewLine));
-                    string.pop();
+                    let mut count: u16 = 0;
+                    if modifiers == KeyModifiers::ALT {
+                        if let Some(idx) = string.rfind(" ") {
+                            // TODO: fix line wrap and overflow
+                            count = (string.len() - idx) as u16;
+                            _ = string.split_off(idx);
+                        } else {
+                            count = string.len() as u16;
+                            string.clear();
+                        }
+                    } else {
+                        string.pop();
+                        count = 1;
+                    }
+                    execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine));
                 }
             }
             // enter
@@ -143,6 +162,16 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
             })) => {
                 execute!(stdout, Print("^D"));
                 return Ok(String::from("quit"));
+            }
+            // ctrl + l
+            Ok(Event::Key(KeyEvent {
+                code: KeyCode::Char('l'),
+                kind: KeyEventKind::Press,
+                modifiers: KeyModifiers::CONTROL,
+                state: _,
+            })) => {
+                let curr_row = crossterm::cursor::position().unwrap().1;
+                execute!(stdout, ScrollUp(curr_row), MoveUp(curr_row)).unwrap()
             }
             // characters
             Ok(Event::Key(KeyEvent {

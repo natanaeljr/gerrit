@@ -39,7 +39,7 @@ fn main() -> std::io::Result<()> {
         print_gerrit_prefix(&mut stdout);
 
         match read_until_newline(&mut stdout)?.as_str() {
-            "help" => execute!(
+            "help" | "?" => execute!(
                 stdout,
                 smart_new_line(1),
                 Print(" help"),
@@ -90,9 +90,9 @@ fn main() -> std::io::Result<()> {
 
 pub fn smart_new_line(num: u16) -> MoveToNextLine {
     let mut stdout = stdout();
-    let cursor_row = crossterm::cursor::position().unwrap().1;
-    let term_row = crossterm::terminal::size().unwrap().1 - 1;
-    if cursor_row == term_row {
+    let curr_row = crossterm::cursor::position().unwrap().1;
+    let term_max_row = crossterm::terminal::size().unwrap().1 - 1;
+    if curr_row == term_max_row {
         execute!(stdout, ScrollUp(num), MoveUp(num));
     }
     MoveToNextLine(num)
@@ -111,7 +111,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
     let mut string = String::new();
     loop {
         match event::read() {
-            // backspace
+            // BACKSPACE
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Backspace,
                 kind: KeyEventKind::Press,
@@ -136,14 +136,14 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                     execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine));
                 }
             }
-            // enter
+            // ENTER
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Enter,
                 kind: KeyEventKind::Press,
                 modifiers: _,
                 state: _,
             })) => return Ok(string),
-            // ctrl + c
+            // CTRL + C
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
                 kind: KeyEventKind::Press,
@@ -153,7 +153,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                 execute!(stdout, Print("^C"));
                 return Ok(String::from("quit"));
             }
-            // ctrl + d
+            // CTRL + D
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Char('d'),
                 kind: KeyEventKind::Press,
@@ -163,7 +163,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                 execute!(stdout, Print("^D"));
                 return Ok(String::from("quit"));
             }
-            // ctrl + l
+            // CTRL + L
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Char('l'),
                 kind: KeyEventKind::Press,
@@ -173,7 +173,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                 let curr_row = crossterm::cursor::position().unwrap().1;
                 execute!(stdout, ScrollUp(curr_row), MoveUp(curr_row)).unwrap()
             }
-            // characters
+            // CHARACTERS
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Char(c),
                 kind: KeyEventKind::Press,
@@ -183,7 +183,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                 execute!(stdout, Print(c));
                 string.push(c)
             }
-            // anything
+            // ANYTHING
             _ => {}
         }
     }

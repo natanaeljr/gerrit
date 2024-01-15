@@ -46,11 +46,10 @@ mod history;
 ///       prompt will have to shift the characters.
 ///
 fn main() -> std::io::Result<()> {
-    terminal::enable_raw_mode()?;
-
     let mut stdout = stdout();
     let mut quit = false;
 
+    terminal::enable_raw_mode()?;
     execute!(
         stdout,
         Print("Gerrit command-line interface"),
@@ -82,7 +81,7 @@ fn main() -> std::io::Result<()> {
                 smart_new_line(2),
             )
             .unwrap(),
-            "quit" => quit = true,
+            "quit" | "exit" => quit = true,
             str if !str.is_empty() => {
                 execute!(
                     stdout,
@@ -113,6 +112,12 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Check if we are at the last row in the terminal,
+/// then we may need to scroll up because we are in RAW mode,
+/// and the terminal won't do that automatically in this mode.
+/// This function quietly does that before `MoveToNextLine`.
+/// Then return the new line object, so this function can be used inside
+/// execute! or queue! in place of the actual `MoveToNextLine` object.
 pub fn smart_new_line(num: u16) -> MoveToNextLine {
     let mut stdout = stdout();
     let curr_row = crossterm::cursor::position().unwrap().1;

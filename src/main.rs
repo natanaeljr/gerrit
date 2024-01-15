@@ -9,6 +9,10 @@ use crossterm::style::{Color, Print, PrintStyledContent, Stylize};
 use crossterm::terminal::{Clear, ClearType, ScrollUp};
 use crossterm::{execute, terminal};
 
+use history::HistoryHandle;
+
+mod history;
+
 /// The ideia right now is to create a binary to start testing crossterm again
 /// and re-create the ger CLI from scratch.
 /// This new version will be similar to network CLIs like confd and ocnos and bluetoothctl.
@@ -19,10 +23,27 @@ use crossterm::{execute, terminal};
 ///
 /// Next step:
 /// - [ ] Handle commands with Clap::App
-/// - [ ] Handle scroll when cursor is at last row of the terminal window
-/// - [ ] Command History
-/// - [ ] script as input to run automatically commands from a file
-
+/// - [x] Handle scroll when cursor is at last row of the terminal window
+/// - [ ] Command History (clear HISTORY, navegate HISTORY, print HISTORY, auto save/load HISTORY)
+/// - [ ] Clear command should clear all lines up to the start of the command `gerrit`
+///       that means, clear until where the command `gerrit` was invoked.
+///       example:
+///       user@pc$ # other stuff          user@pc$ # other stuff
+///       user@pc$ gerrit                 user@pc$ gerrit
+///       gerrit> fdsfds      ---->>>     gerrit>
+///       gerrit> abc
+///       gerrit> clear
+///
+///       This command is kind of complicated because it has to:
+///       Keep track of the new lines that were printed.
+///       Also include the MoveUp, MoveDown... Scroll into the calcule of
+///       lines added from the begging of the program until now.
+///       ScrollDown until program invokation line will be required.
+///       Clear all lines below it will be required.
+/// - [ ] Script as input to run automatically commands from a file
+///
+/// - [ ] In progress HISTORY up/down with on-going command restore on last down-arrow
+///
 fn main() -> std::io::Result<()> {
     terminal::enable_raw_mode()?;
 
@@ -108,7 +129,9 @@ pub fn print_gerrit_prefix<W: Write>(stdout: &mut W) {
 }
 
 pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
-    let mut string = String::new();
+    let mut history = HistoryHandle::get();
+    let mut prompt = String::new();
+    let mut last_prompt: Option<String> = None;
     loop {
         match event::read() {
             // BACKSPACE
@@ -118,19 +141,19 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                 modifiers,
                 state: _,
             })) => {
-                if !string.is_empty() {
+                if !prompt.is_empty() {
                     let mut count: u16 = 0;
                     if modifiers == KeyModifiers::ALT {
-                        if let Some(idx) = string.rfind(" ") {
+                        if let Some(idx) = prompt.rfind(" ") {
                             // TODO: fix line wrap and overflow
-                            count = (string.len() - idx) as u16;
-                            _ = string.split_off(idx);
+                            count = (prompt.len() - idx) as u16;
+                            _ = prompt.split_off(idx);
                         } else {
-                            count = string.len() as u16;
-                            string.clear();
+                            count = prompt.len() as u16;
+                            prompt.clear();
                         }
                     } else {
-                        string.pop();
+                        prompt.pop();
                         count = 1;
                     }
                     execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine));
@@ -142,7 +165,12 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                 kind: KeyEventKind::Press,
                 modifiers: _,
                 state: _,
-            })) => return Ok(string),
+            })) => {
+                if !prompt.is_empty() {
+                    history.add(prompt.clone());
+                }
+                return Ok(prompt);
+            }
             // CTRL + C
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
@@ -173,6 +201,51 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                 let curr_row = crossterm::cursor::position().unwrap().1;
                 execute!(stdout, ScrollUp(curr_row), MoveUp(curr_row)).unwrap()
             }
+            // ARROW UP
+            Ok(Event::Key(KeyEvent {
+                code: KeyCode::Up,
+                kind: KeyEventKind::Press,
+                modifiers: _,
+                state: _,
+            })) => {
+                if let Some(up_next) = history.up_next() {
+                    let count = prompt.len() as u16;
+                    if last_prompt == None {
+                        last_prompt = Some(prompt.clone())
+                    }
+                    prompt = up_next.clone();
+                    if count > 0 {
+                        execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine),);
+                    }
+                    execute!(stdout, Print(prompt.as_str()));
+                }
+            }
+            // ARROW DOWN
+            Ok(Event::Key(KeyEvent {
+                code: KeyCode::Down,
+                kind: KeyEventKind::Press,
+                modifiers: _,
+                state: _,
+            })) => {
+                if let Some(down_next) = history.down_next() {
+                    let count = prompt.len() as u16;
+                    prompt = down_next.clone();
+                    if count > 0 {
+                        execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine));
+                    }
+                    execute!(stdout, Print(prompt.as_str()));
+                } else {
+                    let count = prompt.len() as u16;
+                    if count > 0 {
+                        execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine),);
+                    }
+                    if last_prompt.is_some() {
+                        prompt = last_prompt.unwrap();
+                        last_prompt = None;
+                    }
+                    execute!(stdout, Print(prompt.as_str()));
+                }
+            }
             // CHARACTERS
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Char(c),
@@ -181,7 +254,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                 state: _,
             })) => {
                 execute!(stdout, Print(c));
-                string.push(c)
+                prompt.push(c);
             }
             // ANYTHING
             _ => {}

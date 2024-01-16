@@ -1,5 +1,6 @@
 use std::io::Write;
 
+use clap::Command;
 use crossterm::execute;
 use crossterm::style::{Print, PrintStyledContent, Stylize};
 
@@ -40,6 +41,7 @@ mod history;
 /// - [ ] Handle left/right arrows and prompt in-middle insert characters,
 ///       prompt will have to shift the characters.
 /// - [ ] Trim whitespace from user input text
+/// - [ ] Make a way to handle '\n' streamed to stdout using print!() as SmartNewLine() instead;
 ///
 fn main() -> std::io::Result<()> {
     cli::initialize();
@@ -54,20 +56,55 @@ fn main() -> std::io::Result<()> {
         cli::prompt();
         let input = cli::read_inputln()?;
         execute!(stdout, SmartNewLine(1)).unwrap();
-        match input.as_str() {
+        if input.is_empty() {
+            continue;
+        }
+        let mut app = Command::new("gerrit")
+            .disable_version_flag(true)
+            .disable_help_flag(true)
+            .disable_help_subcommand(true)
+            .infer_subcommands(true)
+            .subcommands([
+                Command::new("quit").alias("exit"),
+                Command::new("help").alias("?"),
+                Command::new("remote"),
+            ]);
+        let matches = app.try_get_matches_from(vec!["gerrit", input.as_str()]);
+        if matches.is_err() || matches.as_ref().unwrap().subcommand_name().is_none() {
+            print_unknown_command(&mut stdout);
+            continue;
+        }
+        let cmd = matches.as_ref().unwrap().subcommand_name().unwrap();
+        match cmd {
             "quit" | "exit" => quit = true,
             "help" | "?" => print_help(&mut stdout),
             "remote" => cmd_remote(),
-            str if !str.is_empty() => {
-                print_unknown_command(&mut stdout);
-            }
-            _ => {}
+            str => print_exception_cmd(&mut stdout, str),
         }
     }
     print_done(&mut stdout);
     cli::deinitialize();
     Ok(())
 }
+
+// pub fn handle_cmds(input: &str) -> u32 {
+//     let app = Command::new("gerrit").infer_subcommands(true).subcommands([
+//         Command::new("remote"),
+//         Command::new("help").alias("?"),
+//         Command::new("quit").alias("exit"),
+//     ]);
+//     let matches = app.try_get_matches_from(vec!["gerrit", input]);
+//     if matches.is_err() {
+//         return 1;
+//     }
+//     let matches = matches.unwrap();
+//     let mut stdout = cli::stdout();
+//     if let Some(cmd) = matches.subcommand_name() {
+//         cliprintln!(stdout, "Got command {}", cmd);
+//         return 0;
+//     }
+//     return 1;
+// }
 
 pub fn print_help(write: &mut impl Write) {
     execute!(
@@ -88,6 +125,18 @@ pub fn print_unknown_command(writer: &mut impl Write) {
         PrintStyledContent("x".red()),
         Print(" Unknown command"),
         SmartNewLine(1)
+    )
+    .unwrap();
+}
+
+pub fn print_exception_cmd(writer: &mut impl Write, str: &str) {
+    execute!(
+        writer,
+        PrintStyledContent(
+            format!("Exception: unhandled command! '{}'", str)
+                .black()
+                .on_red()
+        )
     )
     .unwrap();
 }

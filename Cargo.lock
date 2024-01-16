@@ -295,6 +295,7 @@ dependencies = [
  "crossterm",
  "gerlib",
  "once_cell",
+ "parking_lot",
 ]
 
 [[package]]

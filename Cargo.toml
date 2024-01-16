@@ -9,3 +9,4 @@ edition = "2021"
 gerlib = { path = "../gerlib" }
 clap = "4.4.16"
 crossterm = "0.27.0"
+once_cell = "1.19.0"

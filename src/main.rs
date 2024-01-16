@@ -11,6 +11,7 @@ use crossterm::{execute, terminal};
 
 use history::HistoryHandle;
 
+mod cli;
 mod history;
 
 /// The ideia right now is to create a binary to start testing crossterm again
@@ -222,7 +223,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
                     if last_prompt == None {
                         last_prompt = Some(prompt.clone())
                     }
-                    prompt = up_next.clone();
+                    prompt = up_next;
                     if count > 0 {
                         execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine),).unwrap();
                     }
@@ -238,7 +239,7 @@ pub fn read_until_newline<W: Write>(stdout: &mut W) -> std::io::Result<String> {
             })) => {
                 if let Some(down_next) = history.down_next() {
                     let count = prompt.len() as u16;
-                    prompt = down_next.clone();
+                    prompt = down_next;
                     if count > 0 {
                         execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine)).unwrap();
                     }

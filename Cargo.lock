@@ -294,6 +294,7 @@ dependencies = [
  "clap",
  "crossterm",
  "gerlib",
+ "once_cell",
 ]
 
 [[package]]

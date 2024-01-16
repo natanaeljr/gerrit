@@ -1,3 +1,7 @@
+use std::sync::RwLock;
+
+use once_cell::sync::Lazy;
+
 /// The command-line history is composed by a global history.
 /// Right now, history is reset every time the program is invoked,
 /// because `HISTORY` is a static global variable.
@@ -6,9 +10,10 @@
 
 /// This is the prompts history storage.
 /// It's global because easier to handle right now.
-/// Because of that, all code manipulating `HISTORY` will be unsafe.
+/// Because of that, all code manipulating `HISTORY` needs to acquire RW lock
+/// in order to safely access the inner data. Hence `HISTORY` is thread safe.
 /// Thus use `HistoryHandle` as wrapper for safe code and to provide utility functions.
-static mut HISTORY: Vec<String> = Vec::new();
+static HISTORY: Lazy<RwLock<Vec<String>>> = Lazy::new(|| RwLock::default());
 
 /// `HistoryHandle` will scroll through the history lines and update `HISTORY`.
 /// Thus an index is kept to know where up in the history we have scrolled through.
@@ -21,10 +26,9 @@ pub struct HistoryHandle {
 impl HistoryHandle {
     /// Get a new `HistoryHandle` to manipulate `HISTORY`.
     pub fn get() -> Self {
-        unsafe {
-            Self {
-                curr_index: HISTORY.len(),
-            }
+        let history = HISTORY.read().unwrap();
+        Self {
+            curr_index: history.len(),
         }
     }
 
@@ -32,40 +36,34 @@ impl HistoryHandle {
     /// This is a smart add because history will not duplicate
     /// the last prompt line if it's added multiple times.
     pub fn add(&mut self, new_line: String) {
-        unsafe {
-            if let Some(last_line) = HISTORY.last() {
-                if &new_line == last_line {
-                    return;
-                }
+        let mut history = HISTORY.write().unwrap();
+        if let Some(last_line) = history.last() {
+            if &new_line == last_line {
+                return;
             }
-            HISTORY.push(new_line);
         }
+        history.push(new_line);
     }
 
     /// Get previous line from `HISTORY` just above current index.
     /// This will update current index in the scroll.
-    pub fn up_next(&mut self) -> Option<&String> {
-        unsafe {
-            if self.curr_index == 0 || HISTORY.is_empty() {
-                return None;
-            }
-            self.curr_index -= 1;
-            HISTORY.get(self.curr_index)
+    pub fn up_next(&mut self) -> Option<String> {
+        let history = HISTORY.read().unwrap();
+        if self.curr_index == 0 || history.is_empty() {
+            return None;
         }
+        self.curr_index -= 1;
+        history.get(self.curr_index).cloned()
     }
 
     /// Get last line from `HISTORY` just below current index.
     /// This will update current index in the scroll.
-    pub fn down_next(&mut self) -> Option<&String> {
-        unsafe {
-            if self.curr_index >= HISTORY.len() {
-                return None;
-            }
-            self.curr_index += 1;
-            if self.curr_index == HISTORY.len() {
-                return None;
-            }
-            HISTORY.get(self.curr_index)
+    pub fn down_next(&mut self) -> Option<String> {
+        let history = HISTORY.read().unwrap();
+        if self.curr_index >= history.len() {
+            return None;
         }
+        self.curr_index += 1;
+        history.get(self.curr_index).cloned()
     }
 }

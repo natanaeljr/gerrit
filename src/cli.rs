@@ -131,16 +131,6 @@ pub fn prompt() {
     .unwrap();
 }
 
-pub fn smart_new_line(num: u16) -> MoveToNextLine {
-    let mut stdout = std::io::stdout();
-    let curr_row = crossterm::cursor::position().unwrap().1;
-    let term_max_row = crossterm::terminal::size().unwrap().1 - 1;
-    if curr_row == term_max_row {
-        execute!(stdout, ScrollUp(num), MoveUp(num)).unwrap();
-    }
-    MoveToNextLine(num)
-}
-
 /// Check if we are at the last row in the terminal,
 /// then we may need to scroll up because we are in RAW mode,
 /// and the terminal won't do that automatically in this mode.

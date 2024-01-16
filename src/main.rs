@@ -1,9 +1,9 @@
-use std::io::{stdout, Write};
+use std::io::Write;
 
 use crossterm::execute;
 use crossterm::style::{Print, PrintStyledContent, Stylize};
 
-use crate::cli::smart_new_line;
+use crate::cli::SmartNewLine;
 
 mod cli;
 mod history;
@@ -45,6 +45,7 @@ fn main() -> std::io::Result<()> {
     cli::initialize();
     cli::set_prefix("gerrit".to_string().stylize());
     cli::set_symbol(">".to_string().green());
+
     let mut stdout = cli::stdout();
     cliprintln!(stdout, "Gerrit command-line interface");
 
@@ -54,67 +55,64 @@ fn main() -> std::io::Result<()> {
         let input = cli::read_inputln()?;
         match input.as_str() {
             "quit" | "exit" => quit = true,
-            "help" | "?" => print_help(),
+            "help" | "?" => print_help(&mut stdout),
             "remote" => cmd_remote(),
-            any if !any.is_empty() => {
-                print_unknown_command();
+            str if !str.is_empty() => {
+                print_unknown_command(&mut stdout);
             }
             _ => {}
         }
     }
-    print_done();
+    print_done(&mut stdout);
     cli::deinitialize();
     Ok(())
 }
 
-pub fn print_help() {
-    let mut stdout = stdout();
+pub fn print_help(write: &mut impl Write) {
     execute!(
-        stdout,
-        smart_new_line(1),
+        write,
+        SmartNewLine(1),
         Print(" help"),
-        smart_new_line(1),
+        SmartNewLine(1),
         Print(" remote"),
-        smart_new_line(1),
+        SmartNewLine(1),
         Print(" quit"),
-        smart_new_line(2),
+        SmartNewLine(2),
     )
     .unwrap()
 }
 
-pub fn print_unknown_command() {
-    let mut stdout = stdout();
+pub fn print_unknown_command(writer: &mut impl Write) {
     execute!(
-        stdout,
-        smart_new_line(1),
+        writer,
+        SmartNewLine(1),
         PrintStyledContent("x".red()),
         Print(" Unknown command"),
-        smart_new_line(1)
+        SmartNewLine(1)
+    )
+    .unwrap();
+}
+
+pub fn print_done(writer: &mut impl Write) {
+    execute!(
+        writer,
+        SmartNewLine(1),
+        PrintStyledContent("✓".green()),
+        Print(" Done"),
+        SmartNewLine(1)
     )
     .unwrap();
 }
 
 pub fn cmd_remote() {
-    let mut stdout = stdout();
+    let mut stdout = cli::stdout();
     execute!(
         stdout,
-        smart_new_line(1),
+        SmartNewLine(1),
         Print("remote one"),
-        smart_new_line(1),
+        SmartNewLine(1),
         Print("remote two"),
-        smart_new_line(2),
+        SmartNewLine(2),
     )
     .unwrap()
-}
-
-pub fn print_done() {
-    let mut stdout = stdout();
-    execute!(
-        stdout,
-        smart_new_line(1),
-        PrintStyledContent("✓".green()),
-        Print(" Done"),
-        smart_new_line(1)
-    )
-    .unwrap();
 }

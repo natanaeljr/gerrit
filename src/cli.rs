@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::fmt;
-use std::fmt::Display;
 use std::io::{Stdout, Write};
 use std::time::Duration;
 
@@ -49,7 +48,7 @@ impl Default for CliSingleton {
 #[macro_export]
 macro_rules! cliprint {
     ($writer:expr, $($arg:tt)*) => {{
-        execute!($writer, Print(format!($($arg)*)));
+        execute!($writer, Print(format!($($arg)*)))
     }};
 }
 
@@ -57,10 +56,10 @@ macro_rules! cliprint {
 #[macro_export]
 macro_rules! cliprintln {
     ($writer:expr) => {
-        execute!($writer, $crate::cli::SmartNewLine(1));
+        execute!($writer, $crate::cli::SmartNewLine(1))
     };
     ($writer:expr, $($arg:tt)*) => {{
-        execute!($writer, Print(format!($($arg)*)), $crate::cli::SmartNewLine(1));
+        execute!($writer, Print(format!($($arg)*)), $crate::cli::SmartNewLine(1))
     }};
 }
 
@@ -82,7 +81,7 @@ pub fn deinitialize() {
     let mut stdout = std::io::stdout();
     execute!(stdout, cursor::Show, style::ResetColor).unwrap();
     stdout.flush().unwrap();
-    /// let terminal commands flush for certain
+    // let terminal commands flush for certain
     std::thread::sleep(Duration::from_millis(50));
 }
 
@@ -122,7 +121,7 @@ pub fn prompt() {
         queue!(stdout, SmartNewLine(1), Clear(ClearType::CurrentLine)).unwrap();
     }
     let cli_guard = CLI.lock();
-    let mut cli = cli_guard.borrow_mut();
+    let cli = cli_guard.borrow();
     execute!(
         stdout,
         PrintStyledContent(cli.prefix.clone()),

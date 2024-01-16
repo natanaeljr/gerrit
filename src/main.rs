@@ -47,12 +47,13 @@ fn main() -> std::io::Result<()> {
     cli::set_symbol(">".to_string().green());
 
     let mut stdout = cli::stdout();
-    cliprintln!(stdout, "Gerrit command-line interface");
+    cliprintln!(stdout, "{}", "Gerrit command-line interface").unwrap();
 
     let mut quit = false;
     while !quit {
         cli::prompt();
         let input = cli::read_inputln()?;
+        execute!(stdout, SmartNewLine(1)).unwrap();
         match input.as_str() {
             "quit" | "exit" => quit = true,
             "help" | "?" => print_help(&mut stdout),
@@ -71,7 +72,6 @@ fn main() -> std::io::Result<()> {
 pub fn print_help(write: &mut impl Write) {
     execute!(
         write,
-        SmartNewLine(1),
         Print(" help"),
         SmartNewLine(1),
         Print(" remote"),
@@ -85,7 +85,6 @@ pub fn print_help(write: &mut impl Write) {
 pub fn print_unknown_command(writer: &mut impl Write) {
     execute!(
         writer,
-        SmartNewLine(1),
         PrintStyledContent("x".red()),
         Print(" Unknown command"),
         SmartNewLine(1)
@@ -96,7 +95,6 @@ pub fn print_unknown_command(writer: &mut impl Write) {
 pub fn print_done(writer: &mut impl Write) {
     execute!(
         writer,
-        SmartNewLine(1),
         PrintStyledContent("✓".green()),
         Print(" Done"),
         SmartNewLine(1)
@@ -108,7 +106,6 @@ pub fn cmd_remote() {
     let mut stdout = cli::stdout();
     execute!(
         stdout,
-        SmartNewLine(1),
         Print("remote one"),
         SmartNewLine(1),
         Print("remote two"),

@@ -204,6 +204,7 @@ pub fn read_inputln() -> std::io::Result<String> {
                 state: _,
             })) => {
                 if !prompt.is_empty() {
+                    prompt = prompt.trim().to_string();
                     history.add(prompt.clone());
                 }
                 return Ok(prompt);

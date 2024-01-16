@@ -49,10 +49,9 @@ fn main() -> std::io::Result<()> {
     cli::set_symbol(">".to_string().green());
 
     let mut stdout = cli::stdout();
-    cliprintln!(stdout, "{}", "Gerrit command-line interface").unwrap();
+    cliprintln!(stdout, "Gerrit command-line interface").unwrap();
 
-    let mut quit = false;
-    while !quit {
+    loop {
         cli::prompt();
         let input = cli::read_inputln()?;
         execute!(stdout, SmartNewLine(1)).unwrap();
@@ -76,35 +75,16 @@ fn main() -> std::io::Result<()> {
         }
         let cmd = matches.as_ref().unwrap().subcommand_name().unwrap();
         match cmd {
-            "quit" | "exit" => quit = true,
+            "quit" | "exit" => break,
             "help" | "?" => print_help(&mut stdout),
             "remote" => cmd_remote(),
-            str => print_exception_cmd(&mut stdout, str),
+            other => print_exception_unhandled_cmd(&mut stdout, other),
         }
     }
     print_done(&mut stdout);
     cli::deinitialize();
     Ok(())
 }
-
-// pub fn handle_cmds(input: &str) -> u32 {
-//     let app = Command::new("gerrit").infer_subcommands(true).subcommands([
-//         Command::new("remote"),
-//         Command::new("help").alias("?"),
-//         Command::new("quit").alias("exit"),
-//     ]);
-//     let matches = app.try_get_matches_from(vec!["gerrit", input]);
-//     if matches.is_err() {
-//         return 1;
-//     }
-//     let matches = matches.unwrap();
-//     let mut stdout = cli::stdout();
-//     if let Some(cmd) = matches.subcommand_name() {
-//         cliprintln!(stdout, "Got command {}", cmd);
-//         return 0;
-//     }
-//     return 1;
-// }
 
 pub fn print_help(write: &mut impl Write) {
     execute!(
@@ -129,7 +109,7 @@ pub fn print_unknown_command(writer: &mut impl Write) {
     .unwrap();
 }
 
-pub fn print_exception_cmd(writer: &mut impl Write, str: &str) {
+pub fn print_exception_unhandled_cmd(writer: &mut impl Write, str: &str) {
     execute!(
         writer,
         PrintStyledContent(

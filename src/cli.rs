@@ -68,7 +68,7 @@ macro_rules! cliprintln {
 /// thus every input is handled from our application only from this point on
 pub fn initialize() {
     terminal::enable_raw_mode().unwrap();
-    let mut stdout = std::io::stdout();
+    let mut stdout = stdout();
     execute!(stdout, cursor::Show, style::ResetColor).unwrap();
 }
 

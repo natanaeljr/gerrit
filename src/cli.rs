@@ -209,11 +209,17 @@ impl Command for SmartNewLine {
 /// Returns the entered characters until '\n'.
 /// This is a fully featured prompt handling with text manipulation
 /// just like a shell, with history, arrows handling, backspace, alt, ctrl, etc.
-pub fn read_inputln() -> std::io::Result<String> {
+pub fn read_inputln(start: &str) -> std::io::Result<String> {
     let mut stdout = stdout();
     let mut history = HistoryHandle::get();
     let mut prompt = String::new();
     let mut last_prompt: Option<String> = None;
+
+    if !start.is_empty() {
+        prompt = start.to_string();
+        execute!(stdout, Print(prompt.as_str())).unwrap();
+    }
+
     loop {
         match event::read() {
             // BACKSPACE
@@ -252,6 +258,7 @@ pub fn read_inputln() -> std::io::Result<String> {
                     prompt = prompt.trim().to_string();
                     history.add(prompt.clone());
                 }
+                execute!(stdout, SmartNewLine(1)).unwrap();
                 return Ok(prompt);
             }
             // CTRL + C
@@ -261,7 +268,7 @@ pub fn read_inputln() -> std::io::Result<String> {
                 modifiers: KeyModifiers::CONTROL,
                 state: _,
             })) => {
-                execute!(stdout, Print("^C")).unwrap();
+                execute!(stdout, Print("^C"), SmartNewLine(1)).unwrap();
                 return Ok(String::from("quit"));
             }
             // CTRL + D
@@ -271,7 +278,7 @@ pub fn read_inputln() -> std::io::Result<String> {
                 modifiers: KeyModifiers::CONTROL,
                 state: _,
             })) => {
-                execute!(stdout, Print("^D")).unwrap();
+                execute!(stdout, Print("^D"), SmartNewLine(1)).unwrap();
                 return Ok(String::from("quit"));
             }
             // CTRL + L

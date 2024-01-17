@@ -1,8 +1,10 @@
 use std::io::Write;
+use std::ops::Deref;
 
 use clap::Command;
-use crossterm::execute;
 use crossterm::style::{Print, PrintStyledContent, Stylize};
+use crossterm::{execute, queue};
+use trie_rs::{Trie, TrieBuilder};
 
 use crate::cli::SmartNewLine;
 
@@ -40,8 +42,14 @@ mod history;
 /// - [x] HISTORY up/down with on-going command restore on last down-arrow
 /// - [ ] Handle left/right arrows and prompt in-middle insert characters,
 ///       prompt will have to shift the characters.
-/// - [ ] Trim whitespace from user input text
+/// - [x] Trim whitespace from user input text
 /// - [ ] Make a way to handle '\n' streamed to stdout using print!() as SmartNewLine() instead;
+/// - [ ] Match commands with a prefix tree (use trie-rs?) and give completion suggestions.
+/// - [ ] On program abort, add hook to restore terminal to normal in order to
+///       print panic output message properly new new lines and all.
+/// - [ ] SmartMoveLeft: because of wrapped text
+///       check for screen column 0 then should MoveUp and MoveToColumn(max).
+/// - [ ] SmartPrint: check for new line characters
 ///
 fn main() -> std::io::Result<()> {
     cli::initialize();
@@ -51,34 +59,58 @@ fn main() -> std::io::Result<()> {
     let mut stdout = cli::stdout();
     cliprintln!(stdout, "Gerrit command-line interface").unwrap();
 
+    let cmd_app = Command::new("gerrit")
+        .disable_version_flag(true)
+        .disable_help_flag(true)
+        .disable_help_subcommand(true)
+        .infer_subcommands(true)
+        .subcommands([
+            Command::new("quit").alias("exit"),
+            Command::new("help"),
+            Command::new("remote"),
+        ]);
+    let cmd_tree = get_command_tree(&cmd_app);
+
+    let mut start_input = String::new();
     loop {
         cli::prompt();
-        let input = cli::read_inputln()?;
-        execute!(stdout, SmartNewLine(1)).unwrap();
+        let input = cli::read_inputln(start_input.as_str())?;
+        start_input.clear();
         if input.is_empty() {
             continue;
         }
-        let mut app = Command::new("gerrit")
-            .disable_version_flag(true)
-            .disable_help_flag(true)
-            .disable_help_subcommand(true)
-            .infer_subcommands(true)
-            .subcommands([
-                Command::new("quit").alias("exit"),
-                Command::new("help").alias("?"),
-                Command::new("remote"),
-            ]);
-        let matches = app.try_get_matches_from(vec!["gerrit", input.as_str()]);
-        if matches.is_err() || matches.as_ref().unwrap().subcommand_name().is_none() {
+
+        let cmd_matches_u8: Vec<Vec<u8>> = cmd_tree.predictive_search(input.as_str());
+        let cmd_matches: Vec<&str> = cmd_matches_u8
+            .iter()
+            .map(|u8s| std::str::from_utf8(u8s).unwrap())
+            .collect();
+        if cmd_matches.is_empty() {
             print_unknown_command(&mut stdout);
             continue;
         }
-        let cmd = matches.as_ref().unwrap().subcommand_name().unwrap();
+
+        // if more than 1 match then suggest command completion
+        if cmd_matches.len() > 1 {
+            for next_cmd in cmd_matches {
+                queue!(stdout, Print(next_cmd), Print("  ")).unwrap();
+            }
+            execute!(stdout, SmartNewLine(1)).unwrap();
+            start_input = input;
+            continue;
+        }
+        // else a full match is found
+        let cmd = cmd_matches.last().unwrap().deref();
+
+        // handle command
         match cmd {
             "quit" | "exit" => break,
-            "help" | "?" => print_help(&mut stdout),
+            "help" | "?" => print_help(&mut stdout, &cmd_app),
             "remote" => cmd_remote(),
-            other => print_exception_unhandled_cmd(&mut stdout, other),
+            other => print_exception(
+                &mut stdout,
+                format!("unhandled command! '{}'", other).as_str(),
+            ),
         }
     }
     print_done(&mut stdout);
@@ -86,20 +118,29 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-pub fn print_help(write: &mut impl Write) {
-    execute!(
-        write,
-        Print(" help"),
-        SmartNewLine(1),
-        Print(" remote"),
-        SmartNewLine(1),
-        Print(" quit"),
-        SmartNewLine(2),
-    )
-    .unwrap()
+fn get_command_tree(cmd_app: &Command) -> Trie<u8> {
+    let mut builder = TrieBuilder::new();
+    for cmd in cmd_app.get_subcommands() {
+        let name = cmd.get_name();
+        builder.push(name);
+        for alias in cmd.get_all_aliases() {
+            builder.push(alias);
+        }
+    }
+    builder.build()
 }
 
-pub fn print_unknown_command(writer: &mut impl Write) {
+fn print_help(write: &mut impl Write, cmd_app: &Command) {
+    for cmd in cmd_app.get_subcommands() {
+        queue!(write, Print(" "), Print(cmd.get_name()), SmartNewLine(1)).unwrap();
+        for alias in cmd.get_all_aliases() {
+            queue!(write, Print(" "), Print(alias), SmartNewLine(1)).unwrap();
+        }
+    }
+    execute!(write, SmartNewLine(1)).unwrap();
+}
+
+fn print_unknown_command(writer: &mut impl Write) {
     execute!(
         writer,
         PrintStyledContent("x".red()),
@@ -109,19 +150,15 @@ pub fn print_unknown_command(writer: &mut impl Write) {
     .unwrap();
 }
 
-pub fn print_exception_unhandled_cmd(writer: &mut impl Write, str: &str) {
+fn print_exception(writer: &mut impl Write, str: &str) {
     execute!(
         writer,
-        PrintStyledContent(
-            format!("Exception: unhandled command! '{}'", str)
-                .black()
-                .on_red()
-        )
+        PrintStyledContent(format!("Exception: {}", str).black().on_red())
     )
     .unwrap();
 }
 
-pub fn print_done(writer: &mut impl Write) {
+fn print_done(writer: &mut impl Write) {
     execute!(
         writer,
         PrintStyledContent("✓".green()),
@@ -131,7 +168,7 @@ pub fn print_done(writer: &mut impl Write) {
     .unwrap();
 }
 
-pub fn cmd_remote() {
+fn cmd_remote() {
     let mut stdout = cli::stdout();
     execute!(
         stdout,

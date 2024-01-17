@@ -1,3 +1,40 @@
+//! Gerrit CLI as a shell.
+//!
+//! This modules manipulates the terminal in order to create a command line interface
+//! in such a way that resembles a shell-like program.
+//! The following example shows how to use this module's features.
+//!
+//! # Example:
+//! ```
+//! fn main() -> io::Result<()> {
+//!     cli::initialize();
+//!     cli::set_prefix("myprogram".to_string().stylize());
+//!     cli::set_symbol(">".to_string().green());
+//!     let mut stdout = cli::stdout();
+//!     cliprintln!(stdout, "Welcome to MyProgram").unwrap();
+//!     loop {
+//!         cli::prompt();
+//!         let input = cli::read_inputln()?;
+//!         if input == "quit" {
+//!             break;
+//!         }
+//!     }
+//!     cliprintln!(stdout, "Thanks for stopping by.").unwrap();
+//!     cli::deinitialize();
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Output:
+//! ```sh
+//! user@pc$ myprogram
+//! Welcome to MyProgram
+//! myprogram>
+//! myprogram>quit
+//! Thanks for stopping by.
+//! user@pc$
+//! ```
+
 use std::cell::RefCell;
 use std::fmt;
 use std::io::{Stdout, Write};
@@ -38,13 +75,19 @@ impl Default for CliSingleton {
     }
 }
 
-/// `cliprint` is just a wrapper macro to be able to print a
-/// str with having to create a Print object before that.
-/// Plus format is expect like print!() macro.
-/// Example:
+/// [`cliprint`] is just a wrapper macro to be able to print a
+/// string without having to create a Print object before that.
+///
+/// [`cliprint`]: crate::cliprint
+///
+/// Plus arg format works just like `print!()` macro.
+///
+/// # Example:
+/// ```
 /// cliprint!(stdout, "{}", Hello World);
 /// // same as:
 /// execute!(stdout, Print("Hello World");
+/// ```
 #[macro_export]
 macro_rules! cliprint {
     ($writer:expr, $($arg:tt)*) => {{
@@ -52,7 +95,9 @@ macro_rules! cliprint {
     }};
 }
 
-/// Just like `cliprint` but a smart new line is added at the end.
+/// Just like [`cliprint`] but a smart new line is added at the end.
+///
+/// [`cliprint`]: crate::cliprint
 #[macro_export]
 macro_rules! cliprintln {
     ($writer:expr) => {

@@ -73,6 +73,13 @@ mod history;
 ///       Similar to linux login info banner.
 ///       Create login auto start config for enabling that.
 /// - [ ] Maybe this prefix+symbol could be a func param only of prompt();
+/// - [ ] Cache `change` cmd output and allow list of changes to be referenced by
+///       index in following commands. Example:
+///         gerrit>change
+///         1 139924  NEW  Changing header color
+///         2 139721  NEW  New footer design
+///         3 139453  NEW  Support new SDK version
+///         gerrit>show #1
 ///
 fn main() -> std::io::Result<()> {
     cli::initialize();
@@ -172,7 +179,7 @@ fn cmd_change(gerrit: &mut GerritRestApi) {
             AdditionalOpt::DetailedAccounts,
             AdditionalOpt::CurrentRevision,
         ]),
-        limit: Some(20),
+        limit: Some(10),
         start: None,
     };
     // TODO: Loading dots square..
@@ -197,10 +204,12 @@ fn cmd_change(gerrit: &mut GerritRestApi) {
     if changes_list.is_empty() {
         cliprintln!(stdout, "no changes").unwrap();
     }
-    for changes in &changes_list {
-        for change in changes {
+    for (i, changes) in changes_list.iter().enumerate() {
+        for (j, change) in changes.iter().enumerate() {
             queue!(
                 stdout,
+                PrintStyledContent(format!("{:1}", i + j + 1).blue()),
+                Print(" "),
                 PrintStyledContent(change.number.to_string().dark_yellow()),
                 Print("  "),
                 PrintStyledContent(format!("{:3}", change.status).green()),

@@ -35,6 +35,7 @@ impl HistoryHandle {
     /// Add new line to the `HISTORY`.
     /// This is a smart add because history will not duplicate
     /// the last prompt line if it's added multiple times.
+    /// This will reset current index to last line in history.
     pub fn add(&mut self, new_line: String) {
         let mut history = HISTORY.write().unwrap();
         if let Some(last_line) = history.last() {
@@ -43,6 +44,7 @@ impl HistoryHandle {
             }
         }
         history.push(new_line);
+        self.curr_index = history.len();
     }
 
     /// Get previous line from `HISTORY` just above current index.

@@ -1,12 +1,11 @@
-use std::io::Write;
-use std::ops::Deref;
+use std::io::{ErrorKind, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
+use std::{io, thread};
 
 use clap::Command;
-use crossterm::cursor::{MoveToColumn, MoveToPreviousLine};
+use crossterm::cursor::MoveToColumn;
 use crossterm::style::{Print, PrintStyledContent, Stylize};
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{execute, queue};
@@ -14,7 +13,6 @@ use gerlib::changes::{
     AdditionalOpt, ChangeEndpoints, ChangeInfo, Is, QueryOpr, QueryParams, QueryStr, SearchOpr,
 };
 use gerlib::GerritRestApi;
-use trie_rs::{Trie, TrieBuilder};
 
 use crate::cli::SmartNewLine;
 
@@ -74,6 +72,7 @@ mod history;
 /// - [ ] Display auto logged-in user and remote info in a Banner from program start
 ///       Similar to linux login info banner.
 ///       Create login auto start config for enabling that.
+/// - [ ] Maybe this prefix+symbol could be a func param only of prompt();
 ///
 fn main() -> std::io::Result<()> {
     cli::initialize();
@@ -83,62 +82,42 @@ fn main() -> std::io::Result<()> {
     let mut stdout = cli::stdout();
     cliprintln!(stdout, "Gerrit command-line interface").unwrap();
 
-    let cmd_app = Command::new("gerrit")
+    let cmd_root = Command::new("gerrit")
         .disable_version_flag(true)
         .disable_help_flag(true)
         .disable_help_subcommand(true)
-        .infer_subcommands(true)
         .subcommands([
             Command::new("quit").alias("exit"),
             Command::new("help"),
             Command::new("remote"),
+            Command::new("reset"),
             Command::new("change"),
         ]);
-    let cmd_tree = get_command_tree(&cmd_app);
 
-    let mut gerrit = GerritRestApi::new("url".parse().unwrap(), "username", "password")
-        .unwrap()
-        .ssl_verify(false)
-        .unwrap();
+    let url = std::env::var("GERRIT_URL");
+    let user = std::env::var("GERRIT_USER");
+    let http_pw = std::env::var("GERRIT_PW");
+    if url.is_err() || user.is_err() || http_pw.is_err() {
+        cliprintln!(stdout, "Please set ENV VARS").unwrap();
+        // TODO: cli handle for auto deinitialize (RAII);
+        cli::deinitialize();
+        return Err(io::Error::from(ErrorKind::PermissionDenied));
+    }
 
-    let mut start_input = String::new();
+    let mut gerrit = GerritRestApi::new(
+        url.unwrap().parse().unwrap(),
+        user.unwrap().as_str(),
+        http_pw.unwrap().as_str(),
+    )
+    .unwrap()
+    .ssl_verify(false)
+    .unwrap();
+
     loop {
-        cli::prompt();
-        let input = cli::read_inputln(start_input.as_str())?;
-        start_input.clear();
-        if input.is_empty() {
-            continue;
-        }
-
-        let cmd_matches_u8: Vec<Vec<u8>> = cmd_tree.predictive_search(input.as_str());
-        let cmd_matches: Vec<&str> = cmd_matches_u8
-            .iter()
-            .map(|u8s| std::str::from_utf8(u8s).unwrap())
-            .collect();
-        if cmd_matches.is_empty() {
-            print_unknown_command(&mut stdout);
-            continue;
-        }
-
-        // if more than 1 match then suggest command completion
-        if cmd_matches.len() > 1 {
-            for next_cmd in cmd_matches {
-                queue!(stdout, Print(next_cmd), Print("  ")).unwrap();
-            }
-            execute!(stdout, SmartNewLine(1)).unwrap();
-            start_input = input;
-            continue;
-        }
-        // else a full match is found
-        let cmd = cmd_matches.last().unwrap().deref();
-        execute!(stdout, MoveToPreviousLine(1)).unwrap();
-        cli::prompt();
-        execute!(stdout, Print(cmd), SmartNewLine(1)).unwrap();
-
-        // handle command
-        match cmd {
+        let cmd = cli::prompt(&cmd_root)?;
+        match cmd.as_str() {
             "quit" | "exit" => break,
-            "help" | "?" => print_help(&mut stdout, &cmd_app),
+            "help" => print_help(&mut stdout, &cmd_root),
             "remote" => cmd_remote(),
             "change" => cmd_change(&mut gerrit),
             other => print_exception(
@@ -147,21 +126,9 @@ fn main() -> std::io::Result<()> {
             ),
         }
     }
-    // print_done(&mut stdout);
+
     cli::deinitialize();
     Ok(())
-}
-
-fn get_command_tree(cmd_app: &Command) -> Trie<u8> {
-    let mut builder = TrieBuilder::new();
-    for cmd in cmd_app.get_subcommands() {
-        let name = cmd.get_name();
-        builder.push(name);
-        for alias in cmd.get_all_aliases() {
-            builder.push(alias);
-        }
-    }
-    builder.build()
 }
 
 fn print_help(write: &mut impl Write, cmd_app: &Command) {
@@ -174,30 +141,10 @@ fn print_help(write: &mut impl Write, cmd_app: &Command) {
     execute!(write, SmartNewLine(1)).unwrap();
 }
 
-fn print_unknown_command(writer: &mut impl Write) {
-    execute!(
-        writer,
-        PrintStyledContent("x".red()),
-        Print(" Unknown command"),
-        SmartNewLine(1)
-    )
-    .unwrap();
-}
-
 fn print_exception(writer: &mut impl Write, str: &str) {
     execute!(
         writer,
         PrintStyledContent(format!("Exception: {}", str).black().on_red())
-    )
-    .unwrap();
-}
-
-fn print_done(writer: &mut impl Write) {
-    execute!(
-        writer,
-        PrintStyledContent("✓".green()),
-        Print(" Done"),
-        SmartNewLine(1)
     )
     .unwrap();
 }
@@ -230,7 +177,7 @@ fn cmd_change(gerrit: &mut GerritRestApi) {
     };
     // TODO: Loading dots square..
     let loading_done = Arc::new(AtomicBool::new(false));
-    let loading_thread = std::thread::spawn({
+    std::thread::spawn({
         let this_loading_done = loading_done.clone();
         move || {
             let mut stdout = cli::stdout();
@@ -264,5 +211,5 @@ fn cmd_change(gerrit: &mut GerritRestApi) {
             .unwrap();
         }
     }
-    execute!(stdout, SmartNewLine(1), MoveToPreviousLine(1)).unwrap();
+    stdout.flush().unwrap();
 }

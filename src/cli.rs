@@ -40,13 +40,17 @@ use std::fmt;
 use std::io::{Stdout, Write};
 use std::time::Duration;
 
-use crossterm::cursor::{MoveLeft, MoveToNextLine, MoveUp};
+use clap::Command;
+use crossterm::cursor::{
+    MoveDown, MoveLeft, MoveToColumn, MoveToNextLine, MoveToPreviousLine, MoveUp,
+};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::style::{Print, PrintStyledContent, StyledContent, Stylize};
 use crossterm::terminal::{Clear, ClearType, ScrollUp};
-use crossterm::{cursor, event, execute, queue, style, terminal, Command};
+use crossterm::{cursor, event, execute, queue, style, terminal};
 use once_cell::sync::Lazy;
 use parking_lot::ReentrantMutex;
+use trie_rs::{Trie, TrieBuilder};
 
 use crate::history::HistoryHandle;
 
@@ -159,7 +163,7 @@ pub fn set_symbol(s: StyledContent<String>) {
 
 /// Print prompt for user input
 /// This will display the configured `prefix>` in a blank line as a shell prompt.
-pub fn prompt() {
+fn print_prompt() {
     let mut stdout = std::io::stdout();
     let curr_col = crossterm::cursor::position().unwrap().0;
     if curr_col > 0 {
@@ -184,7 +188,7 @@ pub fn prompt() {
 pub struct SmartNewLine(pub u16);
 
 /// Implementation of the SmartNewLine that handles next-line + scroll.
-impl Command for SmartNewLine {
+impl crossterm::Command for SmartNewLine {
     fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
         let curr_row = crossterm::cursor::position().unwrap().1;
         let term_max_row = crossterm::terminal::size().unwrap().1 - 1;
@@ -209,17 +213,15 @@ impl Command for SmartNewLine {
 /// Returns the entered characters until '\n'.
 /// This is a fully featured prompt handling with text manipulation
 /// just like a shell, with history, arrows handling, backspace, alt, ctrl, etc.
-pub fn read_inputln(start: &str) -> std::io::Result<String> {
-    let mut stdout = stdout();
+pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
+    let cmd_tree = get_command_tree(&cmd_root);
     let mut history = HistoryHandle::get();
-    let mut prompt = String::new();
+    let mut stdout = stdout();
+    let mut user_input = String::new();
     let mut last_prompt: Option<String> = None;
+    let mut suggestion_printed_below = false;
 
-    if !start.is_empty() {
-        prompt = start.to_string();
-        execute!(stdout, Print(prompt.as_str())).unwrap();
-    }
-
+    print_prompt();
     loop {
         match event::read() {
             // BACKSPACE
@@ -229,23 +231,91 @@ pub fn read_inputln(start: &str) -> std::io::Result<String> {
                 modifiers,
                 state: _,
             })) => {
-                if !prompt.is_empty() {
+                if !user_input.is_empty() {
                     let count: u16;
                     if modifiers == KeyModifiers::ALT {
-                        if let Some(idx) = prompt.rfind(" ") {
+                        if let Some(idx) = user_input.rfind(" ") {
                             // TODO: fix line wrap and overflow
-                            count = (prompt.len() - idx) as u16;
-                            _ = prompt.split_off(idx);
+                            count = (user_input.len() - idx) as u16;
+                            _ = user_input.split_off(idx);
                         } else {
-                            count = prompt.len() as u16;
-                            prompt.clear();
+                            count = user_input.len() as u16;
+                            user_input.clear();
                         }
                     } else {
-                        prompt.pop();
+                        user_input.pop();
                         count = 1;
                     }
                     execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine)).unwrap();
+                    if suggestion_printed_below {
+                        execute!(
+                            stdout,
+                            MoveDown(1),
+                            Clear(ClearType::CurrentLine),
+                            MoveUp(1)
+                        )
+                        .unwrap();
+                        suggestion_printed_below = false;
+                    }
                 }
+            }
+            // TAB
+            Ok(Event::Key(KeyEvent {
+                code: KeyCode::Tab,
+                kind: KeyEventKind::Press,
+                modifiers: _,
+                state: _,
+            })) => {
+                // TODO: reuse this code with ENTER branch
+                if user_input.is_empty() {
+                    // execute!(stdout, SmartNewLine(1)).unwrap();
+                    // return Ok(String::from("help"));
+                    continue;
+                }
+                let trimmed_input = user_input.trim().to_string();
+                let has_end_whitespace = trimmed_input.len() != user_input.trim_start().len();
+                if has_end_whitespace {
+                    continue;
+                }
+
+                // Try to match input string against tree of commands
+                let cmd_matches_u8: Vec<Vec<u8>> =
+                    cmd_tree.predictive_search(trimmed_input.as_str());
+                let cmd_matches: Vec<&str> = cmd_matches_u8
+                    .iter()
+                    .map(|u8s| std::str::from_utf8(u8s).unwrap())
+                    .collect();
+
+                if cmd_matches.is_empty() {
+                    continue;
+                }
+
+                // if more than one match then suggest command completion
+                if cmd_matches.len() > 1 && !has_end_whitespace {
+                    let col = cursor::position().unwrap().0;
+                    queue!(stdout, SmartNewLine(1)).unwrap();
+                    for next_cmd in &cmd_matches {
+                        queue!(stdout, Print(next_cmd), Print("  ")).unwrap();
+                    }
+                    execute!(stdout, MoveToPreviousLine(1), MoveToColumn(col)).unwrap();
+                    suggestion_printed_below = true;
+                    continue;
+                }
+
+                // else a full match is found
+                let cmd = *cmd_matches.last().unwrap();
+
+                if trimmed_input.len() < cmd.len() {
+                    // complete the prompt with matching full command string before returning
+                    let whitespace_count = user_input.trim_start().len() - trimmed_input.len();
+                    if whitespace_count > 0 {
+                        queue!(stdout, MoveLeft(whitespace_count as u16),).unwrap();
+                    }
+                    execute!(stdout, Print(cmd.split_at(trimmed_input.len()).1),).unwrap();
+                    user_input.push_str(cmd.split_at(trimmed_input.len()).1);
+                }
+                execute!(stdout, Print(" ")).unwrap();
+                user_input.push(' ');
             }
             // ENTER
             Ok(Event::Key(KeyEvent {
@@ -254,12 +324,65 @@ pub fn read_inputln(start: &str) -> std::io::Result<String> {
                 modifiers: _,
                 state: _,
             })) => {
-                if !prompt.is_empty() {
-                    prompt = prompt.trim().to_string();
-                    history.add(prompt.clone());
+                if suggestion_printed_below {
+                    execute!(
+                        stdout,
+                        MoveDown(1),
+                        Clear(ClearType::CurrentLine),
+                        MoveUp(1)
+                    )
+                    .unwrap();
+                    suggestion_printed_below = false;
                 }
-                execute!(stdout, SmartNewLine(1)).unwrap();
-                return Ok(prompt);
+                if user_input.is_empty() {
+                    print_prompt();
+                    continue;
+                }
+                let trimmed_input = user_input.trim().to_string();
+                let has_end_whitespace = trimmed_input.len() != user_input.trim_start().len();
+
+                // Try to match input string against tree of commands
+                let cmd_matches_u8: Vec<Vec<u8>> =
+                    cmd_tree.predictive_search(trimmed_input.as_str());
+                let cmd_matches: Vec<&str> = cmd_matches_u8
+                    .iter()
+                    .map(|u8s| std::str::from_utf8(u8s).unwrap())
+                    .collect();
+
+                if cmd_matches.is_empty() || (cmd_matches.len() > 1 && has_end_whitespace) {
+                    queue!(stdout, SmartNewLine(1)).unwrap();
+                    print_unknown_command(&mut stdout);
+                    print_prompt();
+                    history.add(trimmed_input);
+                    user_input.clear();
+                    continue;
+                }
+
+                // if more than one match then suggest command completion
+                if cmd_matches.len() > 1 && !has_end_whitespace {
+                    queue!(stdout, SmartNewLine(1)).unwrap();
+                    for next_cmd in &cmd_matches {
+                        queue!(stdout, Print(next_cmd), Print("  ")).unwrap();
+                    }
+                    print_prompt();
+                    execute!(stdout, Print(user_input.as_str())).unwrap();
+                    continue;
+                }
+
+                // else a full match is found
+                let cmd = *cmd_matches.last().unwrap();
+                if trimmed_input.len() < cmd.len() {
+                    // complete the prompt with matching full command string before returning
+                    let whitespace_count = user_input.trim_start().len() - trimmed_input.len();
+                    if whitespace_count > 0 {
+                        queue!(stdout, MoveLeft(whitespace_count as u16),).unwrap();
+                    }
+                    queue!(stdout, Print(cmd.split_at(trimmed_input.len()).1)).unwrap();
+                }
+                execute!(stdout, SmartNewLine(1), Clear(ClearType::CurrentLine)).unwrap();
+
+                history.add(cmd.to_string());
+                return Ok(cmd.to_string());
             }
             // CTRL + C
             Ok(Event::Key(KeyEvent {
@@ -299,15 +422,15 @@ pub fn read_inputln(start: &str) -> std::io::Result<String> {
                 state: _,
             })) => {
                 if let Some(up_next) = history.up_next() {
-                    let count = prompt.len() as u16;
+                    let count = user_input.len() as u16;
                     if last_prompt == None {
-                        last_prompt = Some(prompt.clone())
+                        last_prompt = Some(user_input.clone())
                     }
-                    prompt = up_next;
+                    user_input = up_next;
                     if count > 0 {
                         execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine),).unwrap();
                     }
-                    execute!(stdout, Print(prompt.as_str())).unwrap();
+                    execute!(stdout, Print(user_input.as_str())).unwrap();
                 }
             }
             // ARROW DOWN
@@ -318,22 +441,22 @@ pub fn read_inputln(start: &str) -> std::io::Result<String> {
                 state: _,
             })) => {
                 if let Some(down_next) = history.down_next() {
-                    let count = prompt.len() as u16;
-                    prompt = down_next;
+                    let count = user_input.len() as u16;
+                    user_input = down_next;
                     if count > 0 {
                         execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine)).unwrap();
                     }
-                    execute!(stdout, Print(prompt.as_str())).unwrap();
+                    execute!(stdout, Print(user_input.as_str())).unwrap();
                 } else {
-                    let count = prompt.len() as u16;
+                    let count = user_input.len() as u16;
                     if count > 0 {
                         execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine),).unwrap();
                     }
                     if last_prompt.is_some() {
-                        prompt = last_prompt.unwrap();
+                        user_input = last_prompt.unwrap();
                         last_prompt = None;
                     }
-                    execute!(stdout, Print(prompt.as_str())).unwrap();
+                    execute!(stdout, Print(user_input.as_str())).unwrap();
                 }
             }
             // CHARACTERS
@@ -344,10 +467,34 @@ pub fn read_inputln(start: &str) -> std::io::Result<String> {
                 state: _,
             })) => {
                 execute!(stdout, Print(c)).unwrap();
-                prompt.push(c);
+                user_input.push(c);
             }
             // ANYTHING
             _ => {}
         }
     }
+}
+
+/// TODO: Documentation
+fn get_command_tree(cmd_app: &Command) -> Trie<u8> {
+    let mut builder = TrieBuilder::new();
+    for cmd in cmd_app.get_subcommands() {
+        let name = cmd.get_name();
+        builder.push(name);
+        for alias in cmd.get_all_aliases() {
+            builder.push(alias);
+        }
+    }
+    builder.build()
+}
+
+/// TODO: Documentation
+fn print_unknown_command(writer: &mut impl Write) {
+    execute!(
+        writer,
+        PrintStyledContent("x".red()),
+        Print(" Unknown command"),
+        SmartNewLine(1)
+    )
+    .unwrap();
 }

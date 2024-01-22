@@ -40,7 +40,6 @@ use std::fmt;
 use std::io::{Stdout, Write};
 use std::time::Duration;
 
-use clap::Command;
 use crossterm::cursor::{
     MoveDown, MoveLeft, MoveToColumn, MoveToNextLine, MoveToPreviousLine, MoveUp,
 };
@@ -50,9 +49,9 @@ use crossterm::terminal::{Clear, ClearType, ScrollUp};
 use crossterm::{cursor, event, execute, queue, style, terminal};
 use once_cell::sync::Lazy;
 use parking_lot::ReentrantMutex;
-use trie_rs::{Trie, TrieBuilder};
 
 use crate::history::HistoryHandle;
+use crate::util;
 use crate::util::TrieUtils;
 
 /// Global variable holding CLI data.
@@ -237,7 +236,7 @@ impl crossterm::Command for SmartNewLine {
 /// This is a fully featured prompt handling with text manipulation
 /// just like a shell, with history, arrows handling, backspace, alt, ctrl, etc.
 pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
-    let cmd_tree = get_command_tree(&cmd_root);
+    let cmd_tree = util::get_command_trie(&cmd_root);
     let mut history = HistoryHandle::get();
     let mut writer = stdout();
     let mut user_input = String::new();
@@ -276,6 +275,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                     }
                 }
             }
+
             // TAB
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Tab,
@@ -283,7 +283,6 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 modifiers: _,
                 state: _,
             })) => {
-                // TODO: reuse this code with ENTER branch
                 if user_input.is_empty() {
                     continue;
                 }
@@ -323,6 +322,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                     suggestion_printed_below = false;
                 }
             }
+
             // ENTER
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Enter,
@@ -373,6 +373,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 history.add(cmd.clone());
                 return Ok(cmd.clone());
             }
+
             // CTRL + C
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
@@ -383,6 +384,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 execute!(writer, Print("^C"), SmartNewLine(1)).unwrap();
                 return Ok(String::from("quit"));
             }
+
             // CTRL + D
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Char('d'),
@@ -393,6 +395,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 execute!(writer, Print("^D"), SmartNewLine(1)).unwrap();
                 return Ok(String::from("quit"));
             }
+
             // CTRL + L
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Char('l'),
@@ -403,6 +406,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 let curr_row = crossterm::cursor::position().unwrap().1;
                 execute!(writer, ScrollUp(curr_row), MoveUp(curr_row)).unwrap()
             }
+
             // ARROW UP
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Up,
@@ -422,6 +426,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                     execute!(writer, Print(user_input.as_str())).unwrap();
                 }
             }
+
             // ARROW DOWN
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Down,
@@ -448,6 +453,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                     execute!(writer, Print(user_input.as_str())).unwrap();
                 }
             }
+
             // CHARACTERS
             Ok(Event::Key(KeyEvent {
                 code: KeyCode::Char(c),
@@ -458,18 +464,23 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 execute!(writer, Print(c)).unwrap();
                 user_input.push(c);
             }
+
             // ANYTHING
             _ => {}
         }
     }
 }
 
+/// Print out list of commands as for completion suggestions.
+/// TODO: support line wrapping after newline tracking is implemented.
 fn print_command_completions(writer: &mut impl Write, cmds: &Vec<String>) {
     for cmd in cmds {
         queue!(writer, Print(cmd), Print("  ")).unwrap();
     }
 }
 
+/// Complete user prompt with remainder of command string
+/// This will print only remaining characters.
 fn print_prompt_full_completion(
     writer: &mut impl Write,
     user_input: &String,
@@ -483,6 +494,7 @@ fn print_prompt_full_completion(
     queue!(writer, Print(cmd.split_at(trimmed_input.len()).1)).unwrap();
 }
 
+/// Clear line below and return to previous line
 fn clear_line_below(writer: &mut impl Write) {
     execute!(
         writer,
@@ -493,20 +505,7 @@ fn clear_line_below(writer: &mut impl Write) {
     .unwrap();
 }
 
-/// TODO: Documentation
-fn get_command_tree(cmd_app: &Command) -> Trie<u8> {
-    let mut builder = TrieBuilder::new();
-    for cmd in cmd_app.get_subcommands() {
-        let name = cmd.get_name();
-        builder.push(name);
-        for alias in cmd.get_all_aliases() {
-            builder.push(alias);
-        }
-    }
-    builder.build()
-}
-
-/// TODO: Documentation
+/// Print out message "Unknown command" with new line
 fn print_unknown_command(writer: &mut impl Write) {
     execute!(
         writer,

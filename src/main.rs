@@ -18,6 +18,7 @@ use crate::cli::SmartNewLine;
 
 mod cli;
 mod history;
+mod util;
 
 /// The ideia right now is to create a binary to start testing crossterm again
 /// and re-create the ger CLI from scratch.

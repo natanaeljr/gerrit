@@ -37,7 +37,6 @@
 
 use std::cell::RefCell;
 use std::fmt;
-use std::fmt::Display;
 use std::io::{Stdout, Write};
 use std::time::Duration;
 
@@ -54,6 +53,7 @@ use parking_lot::ReentrantMutex;
 use trie_rs::{Trie, TrieBuilder};
 
 use crate::history::HistoryHandle;
+use crate::util::TrieUtils;
 
 /// Global variable holding CLI data.
 /// It is lazy-initialized on first access.
@@ -181,15 +181,15 @@ pub fn set_symbol(s: StyledContent<String>) {
 /// Print prompt for user input
 /// This will display the configured `prefix>` in a blank line as a shell prompt.
 fn print_prompt() {
-    let mut stdout = std::io::stdout();
+    let mut writer = std::io::stdout();
     let curr_col = crossterm::cursor::position().unwrap().0;
     if curr_col > 0 {
-        queue!(stdout, SmartNewLine(1), Clear(ClearType::CurrentLine)).unwrap();
+        queue!(writer, SmartNewLine(1), Clear(ClearType::CurrentLine)).unwrap();
     }
     let cli_guard = CLI.lock();
     let cli = cli_guard.borrow();
     execute!(
-        stdout,
+        writer,
         PrintStyledContent(cli.prefix.clone()),
         PrintStyledContent(cli.symbol.clone()),
     )
@@ -217,13 +217,19 @@ impl crossterm::Command for SmartNewLine {
         Ok(())
     }
 
-    // #[cfg(windows)]
-    // fn execute_winapi(&self) -> std::io::Result<()> {
-    //     if self.0 != 0 {
-    //         sys::move_to_previous_line(self.0)?;
-    //     }
-    //     Ok(())
-    // }
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        if self.0 != 0 {
+            let curr_row = crossterm::cursor::position().unwrap().1;
+            let term_max_row = crossterm::terminal::size().unwrap().1 - 1;
+            if curr_row == term_max_row {
+                ScrollUp(self.0).execute_winapi()?;
+                MoveUp(self.0).execute_winapi()?;
+            }
+            sys::move_to_previous_line(self.0)?;
+        }
+        Ok(())
+    }
 }
 
 /// Read input from terminal until enter is given.
@@ -233,7 +239,7 @@ impl crossterm::Command for SmartNewLine {
 pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
     let cmd_tree = get_command_tree(&cmd_root);
     let mut history = HistoryHandle::get();
-    let mut stdout = stdout();
+    let mut writer = stdout();
     let mut user_input = String::new();
     let mut last_prompt: Option<String> = None;
     let mut suggestion_printed_below = false;
@@ -263,15 +269,9 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                         user_input.pop();
                         count = 1;
                     }
-                    execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine)).unwrap();
+                    execute!(writer, MoveLeft(count), Clear(ClearType::UntilNewLine)).unwrap();
                     if suggestion_printed_below {
-                        execute!(
-                            stdout,
-                            MoveDown(1),
-                            Clear(ClearType::CurrentLine),
-                            MoveUp(1)
-                        )
-                        .unwrap();
+                        clear_line_below(&mut writer);
                         suggestion_printed_below = false;
                     }
                 }
@@ -285,8 +285,6 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
             })) => {
                 // TODO: reuse this code with ENTER branch
                 if user_input.is_empty() {
-                    // execute!(stdout, SmartNewLine(1)).unwrap();
-                    // return Ok(String::from("help"));
                     continue;
                 }
                 let trimmed_input = user_input.trim().to_string();
@@ -295,14 +293,8 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                     continue;
                 }
 
-                // Try to match input string against tree of commands
-                let cmd_matches_u8: Vec<Vec<u8>> =
-                    cmd_tree.predictive_search(trimmed_input.as_str());
-                let cmd_matches: Vec<&str> = cmd_matches_u8
-                    .iter()
-                    .map(|u8s| std::str::from_utf8(u8s).unwrap())
-                    .collect();
-
+                // try to match input string against tree of commands
+                let cmd_matches = cmd_tree.collect_matches(&trimmed_input);
                 if cmd_matches.is_empty() {
                     continue;
                 }
@@ -310,38 +302,24 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 // if more than one match then suggest command completion
                 if cmd_matches.len() > 1 && !has_end_whitespace {
                     let col = cursor::position().unwrap().0;
-                    queue!(stdout, SmartNewLine(1)).unwrap();
-                    for next_cmd in &cmd_matches {
-                        queue!(stdout, Print(next_cmd), Print("  ")).unwrap();
-                    }
-                    execute!(stdout, MoveToPreviousLine(1), MoveToColumn(col)).unwrap();
+                    queue!(writer, SmartNewLine(1)).unwrap();
+                    print_command_completions(&mut writer, &cmd_matches);
+                    execute!(writer, MoveToPreviousLine(1), MoveToColumn(col)).unwrap();
                     suggestion_printed_below = true;
                     continue;
                 }
 
                 // else a full match is found
-                let cmd = *cmd_matches.last().unwrap();
-
+                let cmd = cmd_matches.last().unwrap();
                 if trimmed_input.len() < cmd.len() {
-                    // complete the prompt with matching full command string before returning
-                    let whitespace_count = user_input.trim_start().len() - trimmed_input.len();
-                    if whitespace_count > 0 {
-                        queue!(stdout, MoveLeft(whitespace_count as u16),).unwrap();
-                    }
-                    execute!(stdout, Print(cmd.split_at(trimmed_input.len()).1),).unwrap();
+                    print_prompt_full_completion(&mut writer, &user_input, &trimmed_input, &cmd);
                     user_input.push_str(cmd.split_at(trimmed_input.len()).1);
                 }
-                execute!(stdout, Print(" ")).unwrap();
+                execute!(writer, Print(" ")).unwrap();
                 user_input.push(' ');
 
                 if suggestion_printed_below {
-                    execute!(
-                        stdout,
-                        MoveDown(1),
-                        Clear(ClearType::CurrentLine),
-                        MoveUp(1)
-                    )
-                    .unwrap();
+                    clear_line_below(&mut writer);
                     suggestion_printed_below = false;
                 }
             }
@@ -353,13 +331,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 state: _,
             })) => {
                 if suggestion_printed_below {
-                    execute!(
-                        stdout,
-                        MoveDown(1),
-                        Clear(ClearType::CurrentLine),
-                        MoveUp(1)
-                    )
-                    .unwrap();
+                    clear_line_below(&mut writer);
                     suggestion_printed_below = false;
                 }
                 if user_input.is_empty() {
@@ -369,17 +341,11 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 let trimmed_input = user_input.trim().to_string();
                 let has_end_whitespace = trimmed_input.len() != user_input.trim_start().len();
 
-                // Try to match input string against tree of commands
-                let cmd_matches_u8: Vec<Vec<u8>> =
-                    cmd_tree.predictive_search(trimmed_input.as_str());
-                let cmd_matches: Vec<&str> = cmd_matches_u8
-                    .iter()
-                    .map(|u8s| std::str::from_utf8(u8s).unwrap())
-                    .collect();
-
+                // try to match input string against tree of commands
+                let cmd_matches = cmd_tree.collect_matches(&trimmed_input);
                 if cmd_matches.is_empty() || (cmd_matches.len() > 1 && has_end_whitespace) {
-                    queue!(stdout, SmartNewLine(1)).unwrap();
-                    print_unknown_command(&mut stdout);
+                    queue!(writer, SmartNewLine(1)).unwrap();
+                    print_unknown_command(&mut writer);
                     print_prompt();
                     history.add(trimmed_input);
                     user_input.clear();
@@ -388,29 +354,24 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
 
                 // if more than one match then suggest command completion
                 if cmd_matches.len() > 1 && !has_end_whitespace {
-                    queue!(stdout, SmartNewLine(1)).unwrap();
-                    for next_cmd in &cmd_matches {
-                        queue!(stdout, Print(next_cmd), Print("  ")).unwrap();
-                    }
+                    queue!(writer, SmartNewLine(1)).unwrap();
+                    print_command_completions(&mut writer, &cmd_matches);
                     print_prompt();
-                    execute!(stdout, Print(user_input.as_str())).unwrap();
+                    execute!(writer, Print(user_input.as_str())).unwrap();
                     continue;
                 }
 
                 // else a full match is found
-                let cmd = *cmd_matches.last().unwrap();
+                let cmd = cmd_matches.last().unwrap();
                 if trimmed_input.len() < cmd.len() {
-                    // complete the prompt with matching full command string before returning
-                    let whitespace_count = user_input.trim_start().len() - trimmed_input.len();
-                    if whitespace_count > 0 {
-                        queue!(stdout, MoveLeft(whitespace_count as u16),).unwrap();
-                    }
-                    queue!(stdout, Print(cmd.split_at(trimmed_input.len()).1)).unwrap();
+                    print_prompt_full_completion(&mut writer, &user_input, &trimmed_input, &cmd);
                 }
-                execute!(stdout, SmartNewLine(1), Clear(ClearType::CurrentLine)).unwrap();
+                // clear any previous line of command suggestions
+                execute!(writer, SmartNewLine(1), Clear(ClearType::CurrentLine)).unwrap();
 
-                history.add(cmd.to_string());
-                return Ok(cmd.to_string());
+                // command is final, process it now
+                history.add(cmd.clone());
+                return Ok(cmd.clone());
             }
             // CTRL + C
             Ok(Event::Key(KeyEvent {
@@ -419,7 +380,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 modifiers: KeyModifiers::CONTROL,
                 state: _,
             })) => {
-                execute!(stdout, Print("^C"), SmartNewLine(1)).unwrap();
+                execute!(writer, Print("^C"), SmartNewLine(1)).unwrap();
                 return Ok(String::from("quit"));
             }
             // CTRL + D
@@ -429,7 +390,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 modifiers: KeyModifiers::CONTROL,
                 state: _,
             })) => {
-                execute!(stdout, Print("^D"), SmartNewLine(1)).unwrap();
+                execute!(writer, Print("^D"), SmartNewLine(1)).unwrap();
                 return Ok(String::from("quit"));
             }
             // CTRL + L
@@ -440,7 +401,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 state: _,
             })) => {
                 let curr_row = crossterm::cursor::position().unwrap().1;
-                execute!(stdout, ScrollUp(curr_row), MoveUp(curr_row)).unwrap()
+                execute!(writer, ScrollUp(curr_row), MoveUp(curr_row)).unwrap()
             }
             // ARROW UP
             Ok(Event::Key(KeyEvent {
@@ -456,9 +417,9 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                     }
                     user_input = up_next;
                     if count > 0 {
-                        execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine),).unwrap();
+                        execute!(writer, MoveLeft(count), Clear(ClearType::UntilNewLine),).unwrap();
                     }
-                    execute!(stdout, Print(user_input.as_str())).unwrap();
+                    execute!(writer, Print(user_input.as_str())).unwrap();
                 }
             }
             // ARROW DOWN
@@ -472,19 +433,19 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                     let count = user_input.len() as u16;
                     user_input = down_next;
                     if count > 0 {
-                        execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine)).unwrap();
+                        execute!(writer, MoveLeft(count), Clear(ClearType::UntilNewLine)).unwrap();
                     }
-                    execute!(stdout, Print(user_input.as_str())).unwrap();
+                    execute!(writer, Print(user_input.as_str())).unwrap();
                 } else {
                     let count = user_input.len() as u16;
                     if count > 0 {
-                        execute!(stdout, MoveLeft(count), Clear(ClearType::UntilNewLine),).unwrap();
+                        execute!(writer, MoveLeft(count), Clear(ClearType::UntilNewLine),).unwrap();
                     }
                     if last_prompt.is_some() {
                         user_input = last_prompt.unwrap();
                         last_prompt = None;
                     }
-                    execute!(stdout, Print(user_input.as_str())).unwrap();
+                    execute!(writer, Print(user_input.as_str())).unwrap();
                 }
             }
             // CHARACTERS
@@ -494,13 +455,42 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 modifiers: _,
                 state: _,
             })) => {
-                execute!(stdout, Print(c)).unwrap();
+                execute!(writer, Print(c)).unwrap();
                 user_input.push(c);
             }
             // ANYTHING
             _ => {}
         }
     }
+}
+
+fn print_command_completions(writer: &mut impl Write, cmds: &Vec<String>) {
+    for cmd in cmds {
+        queue!(writer, Print(cmd), Print("  ")).unwrap();
+    }
+}
+
+fn print_prompt_full_completion(
+    writer: &mut impl Write,
+    user_input: &String,
+    trimmed_input: &String,
+    cmd: &String,
+) {
+    let whitespace_count = user_input.trim_start().len() - trimmed_input.len();
+    if whitespace_count > 0 {
+        queue!(writer, MoveLeft(whitespace_count as u16),).unwrap();
+    }
+    queue!(writer, Print(cmd.split_at(trimmed_input.len()).1)).unwrap();
+}
+
+fn clear_line_below(writer: &mut impl Write) {
+    execute!(
+        writer,
+        MoveDown(1),
+        Clear(ClearType::CurrentLine),
+        MoveUp(1)
+    )
+    .unwrap();
 }
 
 /// TODO: Documentation

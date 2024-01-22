@@ -80,9 +80,11 @@ mod history;
 ///         2 139721  NEW  New footer design
 ///         3 139453  NEW  Support new SDK version
 ///         gerrit>show #1
+/// - [ ] Read & Run commands from stdin, then quit.
+///       Example: echo -e 'change' | gerrit
 ///
 fn main() -> std::io::Result<()> {
-    cli::initialize();
+    let _cli_guard = cli::initialize();
     cli::set_prefix("gerrit".to_string().stylize());
     cli::set_symbol(">".to_string().green());
 
@@ -106,8 +108,6 @@ fn main() -> std::io::Result<()> {
     let http_pw = std::env::var("GERRIT_PW");
     if url.is_err() || user.is_err() || http_pw.is_err() {
         cliprintln!(stdout, "Please set ENV VARS").unwrap();
-        // TODO: cli handle for auto deinitialize (RAII);
-        cli::deinitialize();
         return Err(io::Error::from(ErrorKind::PermissionDenied));
     }
 
@@ -133,8 +133,6 @@ fn main() -> std::io::Result<()> {
             ),
         }
     }
-
-    cli::deinitialize();
     Ok(())
 }
 
@@ -158,14 +156,12 @@ fn print_exception(writer: &mut impl Write, str: &str) {
 
 fn cmd_remote() {
     let mut stdout = cli::stdout();
-    execute!(
-        stdout,
-        Print("remote one"),
-        SmartNewLine(1),
-        Print("remote two"),
-        SmartNewLine(2),
-    )
-    .unwrap()
+    let url = std::env::var("GERRIT_URL");
+    if let Ok(url) = url {
+        execute!(stdout, Print("remote url: "), Print(url), SmartNewLine(1),).unwrap()
+    } else {
+        cliprintln!(stdout, "no remotes configured").unwrap()
+    }
 }
 
 fn cmd_change(gerrit: &mut GerritRestApi) {

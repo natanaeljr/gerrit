@@ -37,6 +37,7 @@
 
 use std::cell::RefCell;
 use std::fmt;
+use std::fmt::Display;
 use std::io::{Stdout, Write};
 use std::time::Duration;
 
@@ -79,6 +80,51 @@ impl Default for CliSingleton {
     }
 }
 
+/// CLI guard is a handle for the user.
+/// The user should hold this guard as long as it's using the CLI.
+/// When `CliGuard` is dropped, the CLI will be deinitialized.
+pub struct CliGuard;
+
+/// Initialize the terminal for this CLI shell.
+/// This command will configure the terminal to be locked to our shell
+/// thus every input is handled from our application only from this point on
+pub fn initialize() -> CliGuard {
+    let cli_guard = CLI.lock();
+    let mut cli = cli_guard.borrow_mut();
+    *cli = CliSingleton::default();
+    terminal::enable_raw_mode().unwrap();
+    let mut stdout = stdout();
+    execute!(stdout, cursor::Show, style::ResetColor).unwrap();
+    CliGuard
+}
+
+/// Return the terminal to its normal state.
+/// The terminal is unlocked from our application.
+/// Input is handled by the terminal from now on and the attributes are reset.
+/// The CLI shell is finished and the terminal is free.
+fn deinitialize() {
+    terminal::disable_raw_mode().unwrap();
+    let mut stdout = std::io::stdout();
+    execute!(stdout, cursor::Show, style::ResetColor).unwrap();
+    stdout.flush().unwrap();
+    // let terminal commands flush for certain
+    std::thread::sleep(Duration::from_millis(50));
+}
+
+/// Deinitialize the CLI when guard drops.
+impl Drop for CliGuard {
+    fn drop(&mut self) {
+        deinitialize()
+    }
+}
+
+/// Return the stdout object used for CLI
+/// It is centralized here because it can be easier
+/// to change if need in the future.
+pub fn stdout() -> Stdout {
+    std::io::stdout()
+}
+
 /// [`cliprint`] is just a wrapper macro to be able to print a
 /// string without having to create a Print object before that.
 ///
@@ -110,35 +156,6 @@ macro_rules! cliprintln {
     ($writer:expr, $($arg:tt)*) => {{
         execute!($writer, Print(format!($($arg)*)), $crate::cli::SmartNewLine(1))
     }};
-}
-
-/// Initialize the terminal for this CLI shell.
-/// This command will configure the terminal to be locked to our shell
-/// thus every input is handled from our application only from this point on
-pub fn initialize() {
-    terminal::enable_raw_mode().unwrap();
-    let mut stdout = stdout();
-    execute!(stdout, cursor::Show, style::ResetColor).unwrap();
-}
-
-/// Return the terminal to its normal state.
-/// The terminal is unlocked from our application.
-/// Input is handled by the terminal from now on and the attributes are reset.
-/// The CLI shell is finished and the terminal is free.
-pub fn deinitialize() {
-    terminal::disable_raw_mode().unwrap();
-    let mut stdout = std::io::stdout();
-    execute!(stdout, cursor::Show, style::ResetColor).unwrap();
-    stdout.flush().unwrap();
-    // let terminal commands flush for certain
-    std::thread::sleep(Duration::from_millis(50));
-}
-
-/// Return the stdout object used for CLI
-/// It is centralized here because it can be easier
-/// to change if need in the future.
-pub fn stdout() -> Stdout {
-    std::io::stdout()
 }
 
 /// Update the prompt's prefix string.
@@ -174,7 +191,7 @@ fn print_prompt() {
     execute!(
         stdout,
         PrintStyledContent(cli.prefix.clone()),
-        PrintStyledContent(cli.symbol.clone())
+        PrintStyledContent(cli.symbol.clone()),
     )
     .unwrap();
 }
@@ -316,6 +333,17 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 }
                 execute!(stdout, Print(" ")).unwrap();
                 user_input.push(' ');
+
+                if suggestion_printed_below {
+                    execute!(
+                        stdout,
+                        MoveDown(1),
+                        Clear(ClearType::CurrentLine),
+                        MoveUp(1)
+                    )
+                    .unwrap();
+                    suggestion_printed_below = false;
+                }
             }
             // ENTER
             Ok(Event::Key(KeyEvent {

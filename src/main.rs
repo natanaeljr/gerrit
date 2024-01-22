@@ -1,21 +1,14 @@
+use std::io;
 use std::io::{ErrorKind, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-use std::{io, thread};
 
 use clap::Command;
-use crossterm::cursor::MoveToColumn;
 use crossterm::style::{Print, PrintStyledContent, Stylize};
-use crossterm::terminal::{Clear, ClearType};
 use crossterm::{execute, queue};
-use gerlib::changes::{
-    AdditionalOpt, ChangeEndpoints, ChangeInfo, Is, QueryOpr, QueryParams, QueryStr, SearchOpr,
-};
 use gerlib::GerritRestApi;
 
 use crate::cli::SmartNewLine;
 
+mod change;
 mod cli;
 mod history;
 mod util;
@@ -127,7 +120,7 @@ fn main() -> std::io::Result<()> {
             "quit" | "exit" => break,
             "help" => print_help(&mut stdout, &cmd_root),
             "remote" => cmd_remote(),
-            "change" => cmd_change(&mut gerrit),
+            "change" => change::run_cmd(&mut gerrit),
             other => print_exception(
                 &mut stdout,
                 format!("unhandled command! '{}'", other).as_str(),
@@ -137,6 +130,8 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Display help
+/// This should basically print out the command list and that's it.
 fn print_help(write: &mut impl Write, cmd_app: &Command) {
     for cmd in cmd_app.get_subcommands() {
         queue!(write, Print(" "), Print(cmd.get_name()), SmartNewLine(1)).unwrap();
@@ -147,6 +142,7 @@ fn print_help(write: &mut impl Write, cmd_app: &Command) {
     execute!(write, SmartNewLine(1)).unwrap();
 }
 
+/// Print out an exception message in highlight.
 fn print_exception(writer: &mut impl Write, str: &str) {
     execute!(
         writer,
@@ -155,6 +151,8 @@ fn print_exception(writer: &mut impl Write, str: &str) {
     .unwrap();
 }
 
+/// Handle `remote` command.
+/// NOTE: Temporary function place.
 fn cmd_remote() {
     let mut stdout = cli::stdout();
     let url = std::env::var("GERRIT_URL");
@@ -163,59 +161,4 @@ fn cmd_remote() {
     } else {
         cliprintln!(stdout, "no remotes configured").unwrap()
     }
-}
-
-fn cmd_change(gerrit: &mut GerritRestApi) {
-    let mut stdout = cli::stdout();
-    let query_param = QueryParams {
-        search_queries: Some(vec![QueryStr::Cooked(vec![
-            QueryOpr::Search(SearchOpr::Owner("Natanael.Rabello".to_string())),
-            QueryOpr::Search(SearchOpr::Is(Is::Open)),
-        ])]),
-        additional_opts: Some(vec![
-            AdditionalOpt::DetailedAccounts,
-            AdditionalOpt::CurrentRevision,
-        ]),
-        limit: Some(10),
-        start: None,
-    };
-    // TODO: Loading dots square..
-    let loading_done = Arc::new(AtomicBool::new(false));
-    std::thread::spawn({
-        let this_loading_done = loading_done.clone();
-        move || {
-            let mut stdout = cli::stdout();
-            thread::sleep(Duration::from_millis(1000));
-            while !this_loading_done.load(Ordering::SeqCst) {
-                // TODO: BUG: the . dot may be printed just after this_loading_done is set to true
-                // and after the line is cleared.
-                execute!(stdout, Print(".")).unwrap();
-                thread::sleep(Duration::from_millis(200));
-            }
-        }
-    });
-    let changes_list: Vec<Vec<ChangeInfo>> = gerrit.query_changes(&query_param).unwrap();
-    loading_done.store(true, Ordering::SeqCst);
-    execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine)).unwrap();
-
-    if changes_list.is_empty() {
-        cliprintln!(stdout, "no changes").unwrap();
-    }
-    for (i, changes) in changes_list.iter().enumerate() {
-        for (j, change) in changes.iter().enumerate() {
-            queue!(
-                stdout,
-                PrintStyledContent(format!("{:1}", i + j + 1).blue()),
-                Print(" "),
-                PrintStyledContent(change.number.to_string().dark_yellow()),
-                Print("  "),
-                PrintStyledContent(format!("{:3}", change.status).green()),
-                Print("  "),
-                Print(change.subject.to_string()),
-                SmartNewLine(1)
-            )
-            .unwrap();
-        }
-    }
-    stdout.flush().unwrap();
 }

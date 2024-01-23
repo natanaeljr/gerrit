@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::io;
 use std::io::{ErrorKind, Write};
 
@@ -82,26 +83,14 @@ fn main() -> std::io::Result<()> {
     cli::set_prefix("gerrit".to_string().stylize());
     cli::set_symbol(">".to_string().green());
 
-    let mut stdout = cli::stdout();
-    cliprintln!(stdout, "Gerrit command-line interface").unwrap();
-
-    let cmd_root = Command::new("gerrit")
-        .disable_version_flag(true)
-        .disable_help_flag(true)
-        .disable_help_subcommand(true)
-        .subcommands([
-            Command::new("quit").alias("exit"),
-            Command::new("help"),
-            Command::new("remote"),
-            Command::new("reset"),
-            Command::new("change"),
-        ]);
+    let mut writer = cli::stdout();
+    cliprintln!(writer, "Gerrit command-line interface").unwrap();
 
     let url = std::env::var("GERRIT_URL");
     let user = std::env::var("GERRIT_USER");
     let http_pw = std::env::var("GERRIT_PW");
     if url.is_err() || user.is_err() || http_pw.is_err() {
-        cliprintln!(stdout, "Please set ENV VARS").unwrap();
+        cliprintln!(writer, "Please set ENV VARS").unwrap();
         return Err(io::Error::from(ErrorKind::PermissionDenied));
     }
 
@@ -114,20 +103,60 @@ fn main() -> std::io::Result<()> {
     .ssl_verify(false)
     .unwrap();
 
+    let cmd_schema = command();
     loop {
-        let cmd = cli::prompt(&cmd_root)?;
+        let args = cli::prompt(&cmd_schema)?;
+        if args.is_empty() {
+            continue;
+        }
+        let cmd = args.first().unwrap();
+        // first level commands
         match cmd.as_str() {
             "quit" | "exit" => break,
-            "help" => print_help(&mut stdout, &cmd_root),
-            "remote" => cmd_remote(),
-            "change" => change::run_cmd(&mut gerrit),
-            other => print_exception(
-                &mut stdout,
-                format!("unhandled command! '{}'", other).as_str(),
-            ),
+            _ => {}
         }
+        // second level commands
+        if run_subcommand(args.as_slice(), &mut gerrit).is_ok() {
+            continue;
+        }
+        // registered command was not handled
+        let exception = format!("unhandled command! '{}'", cmd);
+        print_exception(&mut writer, exception.as_str());
     }
     Ok(())
+}
+
+/// Get the `gerrit` command model/schema as a Clap command structure
+fn command() -> Command {
+    Command::new("gerrit")
+        .disable_version_flag(true)
+        .disable_help_flag(true)
+        .disable_help_subcommand(true)
+        .subcommands([
+            Command::new("quit").alias("exit"),
+            Command::new("help"),
+            Command::new("remote"),
+            Command::new("reset"),
+            change::command(),
+        ])
+}
+
+/// Match prompt against subcommands.
+/// Run matched subcommand and return result.
+fn run_subcommand(args: &[String], gerrit: &mut GerritRestApi) -> Result<(), ()> {
+    if args.is_empty() {
+        return Ok(());
+    }
+    let (cmd, args2) = args.split_first().unwrap();
+    match cmd.as_str() {
+        "remote" => remote_run_command(),
+        "change" => change::run_command(args2, gerrit),
+        "help" => {
+            print_help(&mut cli::stdout(), &command());
+            Ok(())
+        }
+        _ => Err(()),
+    }
 }
 
 /// Display help
@@ -143,7 +172,7 @@ fn print_help(write: &mut impl Write, cmd_app: &Command) {
 }
 
 /// Print out an exception message in highlight.
-fn print_exception(writer: &mut impl Write, str: &str) {
+fn print_exception<D: Display>(writer: &mut impl Write, str: D) {
     execute!(
         writer,
         PrintStyledContent(format!("Exception: {}", str).black().on_red())
@@ -153,7 +182,7 @@ fn print_exception(writer: &mut impl Write, str: &str) {
 
 /// Handle `remote` command.
 /// NOTE: Temporary function place.
-fn cmd_remote() {
+fn remote_run_command() -> Result<(), ()> {
     let mut stdout = cli::stdout();
     let url = std::env::var("GERRIT_URL");
     if let Ok(url) = url {
@@ -161,4 +190,5 @@ fn cmd_remote() {
     } else {
         cliprintln!(stdout, "no remotes configured").unwrap()
     }
+    Ok(())
 }

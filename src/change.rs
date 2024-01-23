@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use clap::Command;
 use crossterm::cursor::MoveToColumn;
 use crossterm::style::{Print, PrintStyledContent, Stylize};
 use crossterm::terminal::{Clear, ClearType};
@@ -14,12 +15,48 @@ use gerlib::changes::{
 use gerlib::GerritRestApi;
 
 use crate::cli::SmartNewLine;
-use crate::{cli, cliprintln};
+use crate::{cli, cliprintln, print_help};
+
+/// Get the `change` command model/schema as a Clap command structure
+pub fn command() -> Command {
+    Command::new("change")
+        .disable_version_flag(true)
+        .disable_help_flag(true)
+        .disable_help_subcommand(true)
+        .subcommands([
+            Command::new("help"),
+            Command::new("show"),
+            Command::new("list"),
+        ])
+}
 
 /// Handle `change` command.
-/// This should enter the `change` mode and print out a list of changes.
-pub fn run_cmd(gerrit: &mut GerritRestApi) {
-    let mut stdout = cli::stdout();
+pub fn run_command(args: &[String], gerrit: &mut GerritRestApi) -> Result<(), ()> {
+    let mut writer = cli::stdout();
+    if args.is_empty() {
+        return list_changes(gerrit);
+    }
+    let (cmd, _args2) = args.split_first().unwrap();
+    match cmd.as_str() {
+        "show" => {
+            cliprintln!(writer, "Show changes").unwrap();
+            Ok(())
+        }
+        "list" => {
+            cliprintln!(writer, "List changes").unwrap();
+            Ok(())
+        }
+        "help" => {
+            print_help(&mut writer, &command());
+            Ok(())
+        }
+        _ => Err(()),
+    }
+}
+
+/// Print out a list of changes.
+pub fn list_changes(gerrit: &mut GerritRestApi) -> Result<(), ()> {
+    let mut writer = cli::stdout();
     let query_param = QueryParams {
         search_queries: Some(vec![QueryStr::Cooked(vec![
             QueryOpr::Search(SearchOpr::Owner("Natanael.Rabello".to_string())),
@@ -49,15 +86,15 @@ pub fn run_cmd(gerrit: &mut GerritRestApi) {
     });
     let changes_list: Vec<Vec<ChangeInfo>> = gerrit.query_changes(&query_param).unwrap();
     loading_done.store(true, Ordering::SeqCst);
-    execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine)).unwrap();
+    execute!(writer, MoveToColumn(0), Clear(ClearType::CurrentLine)).unwrap();
 
     if changes_list.is_empty() {
-        cliprintln!(stdout, "no changes").unwrap();
+        cliprintln!(writer, "no changes").unwrap();
     }
     for (i, changes) in changes_list.iter().enumerate() {
         for (j, change) in changes.iter().enumerate() {
             queue!(
-                stdout,
+                writer,
                 PrintStyledContent(format!("{:1}", i + j + 1).blue()),
                 Print(" "),
                 PrintStyledContent(change.number.to_string().dark_yellow()),
@@ -70,5 +107,6 @@ pub fn run_cmd(gerrit: &mut GerritRestApi) {
             .unwrap();
         }
     }
-    stdout.flush().unwrap();
+    writer.flush().unwrap();
+    Ok(())
 }

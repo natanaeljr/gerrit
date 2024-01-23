@@ -105,7 +105,6 @@ fn deinitialize() {
     terminal::disable_raw_mode().unwrap();
     let mut stdout = std::io::stdout();
     execute!(stdout, cursor::Show, style::ResetColor).unwrap();
-    stdout.flush().unwrap();
     // let terminal commands flush for certain
     std::thread::sleep(Duration::from_millis(50));
 }
@@ -235,8 +234,7 @@ impl crossterm::Command for SmartNewLine {
 /// Returns the entered characters until '\n'.
 /// This is a fully featured prompt handling with text manipulation
 /// just like a shell, with history, arrows handling, backspace, alt, ctrl, etc.
-pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
-    let cmd_tree = util::get_command_trie(&cmd_root);
+pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
     let mut history = HistoryHandle::get();
     let mut writer = stdout();
     let mut user_input = String::new();
@@ -287,13 +285,15 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                     continue;
                 }
                 let trimmed_input = user_input.trim().to_string();
+                let trimmed_input = trimmed_input.split_whitespace().next().unwrap().to_string();
                 let has_end_whitespace = trimmed_input.len() != user_input.trim_start().len();
                 if has_end_whitespace {
                     continue;
                 }
 
                 // try to match input string against tree of commands
-                let cmd_matches = cmd_tree.collect_matches(&trimmed_input);
+                let cmd_trie = util::get_command_trie(&cmd_schema);
+                let cmd_matches = cmd_trie.collect_matches(&trimmed_input);
                 if cmd_matches.is_empty() {
                     continue;
                 }
@@ -339,10 +339,12 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                     continue;
                 }
                 let trimmed_input = user_input.trim().to_string();
+                let trimmed_input = trimmed_input.split_whitespace().next().unwrap().to_string();
                 let has_end_whitespace = trimmed_input.len() != user_input.trim_start().len();
 
                 // try to match input string against tree of commands
-                let cmd_matches = cmd_tree.collect_matches(&trimmed_input);
+                let cmd_trie = util::get_command_trie(&cmd_schema);
+                let cmd_matches = cmd_trie.collect_matches(&trimmed_input);
                 if cmd_matches.is_empty() || (cmd_matches.len() > 1 && has_end_whitespace) {
                     queue!(writer, SmartNewLine(1)).unwrap();
                     print_unknown_command(&mut writer);
@@ -371,7 +373,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
 
                 // command is final, process it now
                 history.add(cmd.clone());
-                return Ok(cmd.clone());
+                return Ok(vec![cmd.clone()]);
             }
 
             // CTRL + C
@@ -382,7 +384,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 state: _,
             })) => {
                 execute!(writer, Print("^C"), SmartNewLine(1)).unwrap();
-                return Ok(String::from("quit"));
+                return Ok(vec![String::from("quit")]);
             }
 
             // CTRL + D
@@ -393,7 +395,7 @@ pub fn prompt(cmd_root: &clap::Command) -> std::io::Result<String> {
                 state: _,
             })) => {
                 execute!(writer, Print("^D"), SmartNewLine(1)).unwrap();
-                return Ok(String::from("quit"));
+                return Ok(vec![String::from("quit")]);
             }
 
             // CTRL + L

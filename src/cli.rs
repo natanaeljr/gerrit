@@ -242,7 +242,7 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
     let mut suggestion_printed_below = false;
 
     print_prompt();
-    loop {
+    'prompt_loop: loop {
         match event::read() {
             // BACKSPACE
             Ok(Event::Key(KeyEvent {
@@ -338,42 +338,68 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                     print_prompt();
                     continue;
                 }
-                let trimmed_input = user_input.trim().to_string();
-                let trimmed_input = trimmed_input.split_whitespace().next().unwrap().to_string();
-                let has_end_whitespace = trimmed_input.len() != user_input.trim_start().len();
+                let mut args = Vec::new();
+                let mut curr_cmd_schema = cmd_schema;
+                let mut user_input_offset = 0;
+                let mut new_user_input = user_input.clone();
+                let user_input2 = user_input.clone();
+                for (word_idx, word_input) in user_input2
+                    .split_whitespace()
+                    .map(|str| (str.as_ptr() as usize - user_input2.as_ptr() as usize, str))
+                {
+                    let word_input = word_input.to_string();
+                    // TODO
+                    // let trimmed_input = word_input.to_string();
+                    // let has_end_whitespace = trimmed_input.len() != user_input.trim_start().len();
+                    let has_end_whitespace = false;
 
-                // try to match input string against tree of commands
-                let cmd_trie = util::get_command_trie(&cmd_schema);
-                let cmd_matches = cmd_trie.collect_matches(&trimmed_input);
-                if cmd_matches.is_empty() || (cmd_matches.len() > 1 && has_end_whitespace) {
-                    queue!(writer, SmartNewLine(1)).unwrap();
-                    print_unknown_command(&mut writer);
+                    // try to match input string against tree of commands
+                    let cmd_trie = util::get_command_trie(&curr_cmd_schema);
+                    let cmd_matches = cmd_trie.collect_matches(&word_input);
+                    if cmd_matches.is_empty() || (cmd_matches.len() > 1 && has_end_whitespace) {
+                        queue!(writer, SmartNewLine(1)).unwrap();
+                        print_invalid_input(&mut writer, &word_input);
+                        print_prompt();
+                        history.add(word_input);
+                        user_input.clear();
+                        continue 'prompt_loop;
+                    }
+
+                    // if more than one match then suggest command completion
+                    if cmd_matches.len() > 1 && !has_end_whitespace {
+                        queue!(writer, SmartNewLine(1)).unwrap();
+                        print_command_completions(&mut writer, &cmd_matches);
+                        print_prompt();
+                        execute!(writer, Print(user_input.as_str())).unwrap();
+                        continue 'prompt_loop;
+                    }
+
+                    // else a full match is found
+                    let cmd = cmd_matches.last().unwrap();
+                    if word_input.len() < cmd.len() {
+                        let word_end_idx = word_idx + word_input.len() + user_input_offset;
+                        let cmd_remainder = cmd.split_at(word_input.len()).1;
+                        user_input_offset += cmd_remainder.len();
+                        new_user_input.insert_str(word_end_idx, cmd_remainder);
+                        // print_prompt_full_completion(&mut writer, &user_input, &word_input, &cmd);
+                    }
+
+                    // command is final, process it now
+                    args.push(cmd.clone());
+                    curr_cmd_schema = curr_cmd_schema
+                        .get_subcommands()
+                        .find(|c| c.get_name() == cmd)
+                        .unwrap();
+                }
+                if !args.is_empty() {
+                    execute!(writer, MoveToColumn(0)).unwrap();
                     print_prompt();
-                    history.add(trimmed_input);
-                    user_input.clear();
-                    continue;
+                    execute!(writer, Print(new_user_input.as_str())).unwrap();
+                    // clear any previous line of command suggestions
+                    execute!(writer, SmartNewLine(1), Clear(ClearType::CurrentLine)).unwrap();
+                    history.add(new_user_input.trim().to_string());
+                    return Ok(args);
                 }
-
-                // if more than one match then suggest command completion
-                if cmd_matches.len() > 1 && !has_end_whitespace {
-                    queue!(writer, SmartNewLine(1)).unwrap();
-                    print_command_completions(&mut writer, &cmd_matches);
-                    print_prompt();
-                    execute!(writer, Print(user_input.as_str())).unwrap();
-                    continue;
-                }
-
-                // else a full match is found
-                let cmd = cmd_matches.last().unwrap();
-                if trimmed_input.len() < cmd.len() {
-                    print_prompt_full_completion(&mut writer, &user_input, &trimmed_input, &cmd);
-                }
-                // clear any previous line of command suggestions
-                execute!(writer, SmartNewLine(1), Clear(ClearType::CurrentLine)).unwrap();
-
-                // command is final, process it now
-                history.add(cmd.clone());
-                return Ok(vec![cmd.clone()]);
             }
 
             // CTRL + C
@@ -508,11 +534,12 @@ fn clear_line_below(writer: &mut impl Write) {
 }
 
 /// Print out message "Unknown command" with new line
-fn print_unknown_command(writer: &mut impl Write) {
+fn print_invalid_input(writer: &mut impl Write, input: &str) {
     execute!(
         writer,
         PrintStyledContent("x".red()),
-        Print(" Unknown command"),
+        Print(" Invalid input: "),
+        Print(input),
         SmartNewLine(1)
     )
     .unwrap();

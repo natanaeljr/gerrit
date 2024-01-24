@@ -27,6 +27,7 @@ pub fn command() -> Command {
             Command::new("help"),
             Command::new("show"),
             Command::new("list"),
+            Command::new("line"),
         ])
 }
 
@@ -42,10 +43,7 @@ pub fn run_command(args: &[String], gerrit: &mut GerritRestApi) -> Result<(), ()
             cliprintln!(writer, "Show changes").unwrap();
             Ok(())
         }
-        "list" => {
-            cliprintln!(writer, "List changes").unwrap();
-            Ok(())
-        }
+        "list" => list_changes(gerrit),
         "help" => {
             print_help(&mut writer, &command());
             Ok(())

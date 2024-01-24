@@ -348,10 +348,10 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                     .map(|str| (str.as_ptr() as usize - user_input2.as_ptr() as usize, str))
                 {
                     let word_input = word_input.to_string();
-                    // TODO
-                    // let trimmed_input = word_input.to_string();
-                    // let has_end_whitespace = trimmed_input.len() != user_input.trim_start().len();
-                    let has_end_whitespace = false;
+                    let has_end_whitespace = user_input2
+                        .chars()
+                        .nth(word_idx + word_input.len())
+                        .map_or_else(|| false, |c| c.is_whitespace());
 
                     // try to match input string against tree of commands
                     let cmd_trie = util::get_command_trie(&curr_cmd_schema);

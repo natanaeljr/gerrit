@@ -410,7 +410,8 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                 state: _,
             })) => {
                 execute!(writer, Print("^C"), SmartNewLine(1)).unwrap();
-                return Ok(vec![String::from("quit")]);
+                print_prompt();
+                user_input.clear();
             }
 
             // CTRL + D

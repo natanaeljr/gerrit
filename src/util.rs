@@ -51,3 +51,26 @@ pub fn get_visible_command_vector(cmd_app: &Command) -> Vec<String> {
     }
     vec
 }
+
+/// Command Action lists actions to taken when returned from command execution
+#[derive(PartialEq)]
+pub enum CmdAction {
+    /// OK = no action
+    Ok,
+    /// Enter a new CLI mode
+    EnterMode(String),
+}
+
+/// Search down the command schema for the command string input.
+/// The returned command schema corresponds to the last command name in the string.
+pub fn find_command<'a>(cmd_schema: &'a Command, inputs: &[String]) -> &'a Command {
+    let mut curr_cmd = cmd_schema;
+    for input in inputs {
+        let new_cmd = curr_cmd
+            .get_subcommands()
+            .find(|c| c.get_name() == input)
+            .unwrap();
+        curr_cmd = new_cmd;
+    }
+    curr_cmd
+}

@@ -6,6 +6,7 @@ use clap::Command;
 use crossterm::style::{Print, PrintStyledContent, Stylize};
 use crossterm::{execute, queue};
 use gerlib::GerritRestApi;
+use util::CmdAction;
 
 use crate::cli::SmartNewLine;
 
@@ -106,11 +107,8 @@ fn main() -> std::io::Result<()> {
     let cmd_schema_root = command();
     let mut fixed_args = Vec::new();
     loop {
-        let curr_cmd_schema = find_command(&cmd_schema_root, fixed_args.as_slice());
+        let curr_cmd_schema = util::find_command(&cmd_schema_root, fixed_args.as_slice());
         let new_args = cli::prompt(curr_cmd_schema)?;
-        if new_args.is_empty() {
-            continue;
-        }
         // first level commands
         let cmd = new_args.first().unwrap();
         match cmd.as_str() {
@@ -149,18 +147,6 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-fn find_command<'a>(cmd_schema: &'a Command, inputs: &[String]) -> &'a Command {
-    let mut curr_cmd = cmd_schema;
-    for input in inputs {
-        let new_cmd = curr_cmd
-            .get_subcommands()
-            .find(|c| c.get_name() == input)
-            .unwrap();
-        curr_cmd = new_cmd;
-    }
-    curr_cmd
-}
-
 /// Get the `gerrit` command model/schema as a Clap command structure
 fn command() -> Command {
     Command::new("gerrit")
@@ -177,18 +163,9 @@ fn command() -> Command {
         ])
 }
 
-#[derive(PartialEq)]
-enum CmdAction {
-    Ok,
-    EnterMode(String),
-}
-
 /// Match prompt against subcommands.
 /// Run matched subcommand and return result.
 fn run_subcommand(args: &[String], gerrit: &mut GerritRestApi) -> Result<CmdAction, ()> {
-    if args.is_empty() {
-        return Ok(CmdAction::Ok);
-    }
     let (cmd, cmd_args) = args.split_first().unwrap();
     match cmd.as_str() {
         "remote" => remote_run_command(),

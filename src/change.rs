@@ -15,7 +15,8 @@ use gerlib::changes::{
 use gerlib::GerritRestApi;
 
 use crate::cli::SmartNewLine;
-use crate::{cli, cliprintln, print_help, CmdAction};
+use crate::util::CmdAction;
+use crate::{cli, cliprintln, print_help};
 
 /// Get the `change` command model/schema as a Clap command structure
 pub fn command() -> Command {

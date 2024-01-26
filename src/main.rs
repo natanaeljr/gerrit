@@ -6,6 +6,7 @@ use clap::Command;
 use crossterm::style::{Print, PrintStyledContent, Stylize};
 use crossterm::{execute, queue};
 use gerlib::GerritRestApi;
+
 use util::CmdAction;
 
 use crate::cli::SmartNewLine;
@@ -85,7 +86,6 @@ fn main() -> std::io::Result<()> {
     cli::set_symbol(">".to_string().green());
 
     let mut writer = cli::stdout();
-    cliprintln!(writer, "Gerrit command-line interface").unwrap();
 
     let url = std::env::var("GERRIT_URL");
     let user = std::env::var("GERRIT_USER");
@@ -104,11 +104,22 @@ fn main() -> std::io::Result<()> {
     .ssl_verify(false)
     .unwrap();
 
+    let mut os_args = std::env::args().collect::<Vec<String>>()[1..].to_vec();
+    let mut handled_os_args = false;
+
     let cmd_schema_root = command();
     let mut fixed_args = Vec::new();
     loop {
-        let curr_cmd_schema = util::find_command(&cmd_schema_root, fixed_args.as_slice());
-        let new_args = cli::prompt(curr_cmd_schema)?;
+        if handled_os_args {
+            break;
+        }
+        let new_args = if os_args.is_empty() {
+            let curr_cmd_schema = util::find_command(&cmd_schema_root, fixed_args.as_slice());
+            cli::prompt(curr_cmd_schema)?
+        } else {
+            handled_os_args = true;
+            os_args.clone()
+        };
         // first level commands
         let cmd = new_args.first().unwrap();
         match cmd.as_str() {

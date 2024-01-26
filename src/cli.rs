@@ -281,9 +281,21 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                 modifiers: _,
                 state: _,
             })) => {
+                if suggestion_printed_below {
+                    clear_line_below(&mut writer);
+                    suggestion_printed_below = false;
+                }
+
                 if user_input.is_empty() {
+                    let cmds = util::get_visible_command_vector(&cmd_schema);
+                    let col = cursor::position().unwrap().0;
+                    queue!(writer, SmartNewLine(1)).unwrap();
+                    print_command_completions(&mut writer, &cmds);
+                    execute!(writer, MoveToPreviousLine(1), MoveToColumn(col)).unwrap();
+                    suggestion_printed_below = true;
                     continue;
                 }
+
                 let trimmed_input = user_input.trim().to_string();
                 let trimmed_input = trimmed_input.split_whitespace().next().unwrap().to_string();
                 let has_end_whitespace = trimmed_input.len() != user_input.trim_start().len();
@@ -388,7 +400,9 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                     args.push(cmd.clone());
                     curr_cmd_schema = curr_cmd_schema
                         .get_subcommands()
-                        .find(|c| c.get_name() == cmd)
+                        .find(|c| {
+                            c.get_name() == cmd || c.get_all_aliases().find(|a| a == cmd) != None
+                        })
                         .unwrap();
                 }
                 if !args.is_empty() {
@@ -422,7 +436,7 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                 state: _,
             })) => {
                 execute!(writer, Print("^D"), SmartNewLine(1)).unwrap();
-                return Ok(vec![String::from("quit")]);
+                return Ok(vec![String::from("exit")]);
             }
 
             // CTRL + L

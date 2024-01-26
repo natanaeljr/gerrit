@@ -111,23 +111,34 @@ fn main() -> std::io::Result<()> {
         if new_args.is_empty() {
             continue;
         }
-        let mut all_args = fixed_args.clone();
-        all_args.extend_from_slice(new_args.as_slice());
-        let cmd = new_args.first().unwrap();
         // first level commands
+        let cmd = new_args.first().unwrap();
         match cmd.as_str() {
-            "quit" | "exit" => break,
+            "quit" => break,
+            "exit" => {
+                if fixed_args.is_empty() {
+                    break;
+                } else {
+                    fixed_args.clear();
+                    cli::set_prefix("gerrit".to_string().stylize());
+                    continue;
+                }
+            }
             _ => {}
         }
+        // fixed args defined by mode are joined with new args and
+        // handled down the command tree path as an all-in-one input line from user
+        let mut all_args = fixed_args.clone();
+        all_args.extend_from_slice(new_args.as_slice());
         // second level commands
-        if let Ok((action, vec)) = run_subcommand(all_args.as_slice(), &mut gerrit) {
-            if action == CmdRet::SetMode {
-                fixed_args = vec;
-                let mut prefix = String::new();
-                for a in &fixed_args {
-                    prefix.push_str(a);
+        let subcmd_ret = run_subcommand(all_args.as_slice(), &mut gerrit);
+        if let Ok(action) = subcmd_ret {
+            match action {
+                CmdAction::Ok => {}
+                CmdAction::EnterMode(str) => {
+                    fixed_args = all_args;
+                    cli::set_prefix(str.stylize());
                 }
-                cli::set_prefix(prefix.stylize());
             }
             continue;
         }
@@ -157,45 +168,36 @@ fn command() -> Command {
         .disable_help_flag(true)
         .disable_help_subcommand(true)
         .subcommands([
-            Command::new("quit").alias("exit"),
-            Command::new("help"),
-            Command::new("remote"),
-            Command::new("reset"),
             change::command(),
+            Command::new("remote").about("Remote commands"),
+            Command::new("reset").about("Reset everything temporarily"),
+            Command::new("help").alias("?").about("Print command help"),
+            Command::new("exit").about("Exit from current mode"),
+            Command::new("quit").about("Quit the program"),
         ])
 }
 
 #[derive(PartialEq)]
-enum CmdRet {
+enum CmdAction {
     Ok,
-    SetMode,
+    EnterMode(String),
 }
 
 /// Match prompt against subcommands.
 /// Run matched subcommand and return result.
-fn run_subcommand(
-    args: &[String],
-    gerrit: &mut GerritRestApi,
-) -> Result<(CmdRet, Vec<String>), ()> {
+fn run_subcommand(args: &[String], gerrit: &mut GerritRestApi) -> Result<CmdAction, ()> {
     if args.is_empty() {
-        return Ok((CmdRet::Ok, vec![]));
+        return Ok(CmdAction::Ok);
     }
-    let (cmd, args2) = args.split_first().unwrap();
-    let ret = match cmd.as_str() {
+    let (cmd, cmd_args) = args.split_first().unwrap();
+    match cmd.as_str() {
         "remote" => remote_run_command(),
-        "change" => change::run_command(args2, gerrit),
-        "help" => {
+        "change" => change::run_command(cmd_args, gerrit),
+        "help" | "?" => {
             print_help(&mut cli::stdout(), &command());
-            Ok(CmdRet::Ok)
+            Ok(CmdAction::Ok)
         }
         _ => Err(()),
-    };
-    let mut vec = Vec::new();
-    if let Ok(CmdRet::SetMode) = ret {
-        vec.extend_from_slice(args);
-        ret.map(move |a| (CmdRet::SetMode, vec))
-    } else {
-        ret.map(|a| (a, vec![]))
     }
 }
 
@@ -203,8 +205,13 @@ fn run_subcommand(
 /// This should basically print out the command list and that's it.
 fn print_help(write: &mut impl Write, cmd_app: &Command) {
     for cmd in cmd_app.get_subcommands() {
-        queue!(write, Print(" "), Print(cmd.get_name()), SmartNewLine(1)).unwrap();
-        for alias in cmd.get_all_aliases() {
+        let line = format!(
+            " {:6}       {}",
+            cmd.get_name(),
+            cmd.get_about().unwrap_or_default()
+        );
+        queue!(write, Print(line), SmartNewLine(1)).unwrap();
+        for alias in cmd.get_visible_aliases() {
             queue!(write, Print(" "), Print(alias), SmartNewLine(1)).unwrap();
         }
     }
@@ -222,7 +229,7 @@ fn print_exception<D: Display>(writer: &mut impl Write, str: D) {
 
 /// Handle `remote` command.
 /// NOTE: Temporary function place.
-fn remote_run_command() -> Result<CmdRet, ()> {
+fn remote_run_command() -> Result<CmdAction, ()> {
     let mut stdout = cli::stdout();
     let url = std::env::var("GERRIT_URL");
     if let Ok(url) = url {
@@ -230,5 +237,5 @@ fn remote_run_command() -> Result<CmdRet, ()> {
     } else {
         cliprintln!(stdout, "no remotes configured").unwrap()
     }
-    Ok(CmdRet::Ok)
+    Ok(CmdAction::Ok)
 }

@@ -37,3 +37,17 @@ pub fn get_command_trie(cmd_app: &Command) -> Trie<u8> {
     }
     builder.build()
 }
+
+/// Return a vector of commands based on Command app created with Clap.
+/// One can use the command vector to list all possible commands.
+pub fn get_visible_command_vector(cmd_app: &Command) -> Vec<String> {
+    let mut vec = Vec::new();
+    for cmd in cmd_app.get_subcommands() {
+        let name = cmd.get_name().to_string();
+        vec.push(name);
+        for alias in cmd.get_visible_aliases() {
+            vec.push(alias.to_string());
+        }
+    }
+    vec
+}

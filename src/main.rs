@@ -103,20 +103,32 @@ fn main() -> std::io::Result<()> {
     .ssl_verify(false)
     .unwrap();
 
-    let cmd_schema = command();
+    let cmd_schema_root = command();
+    let mut fixed_args = Vec::new();
     loop {
-        let args = cli::prompt(&cmd_schema)?;
-        if args.is_empty() {
+        let curr_cmd_schema = find_command(&cmd_schema_root, fixed_args.as_slice());
+        let new_args = cli::prompt(curr_cmd_schema)?;
+        if new_args.is_empty() {
             continue;
         }
-        let cmd = args.first().unwrap();
+        let mut all_args = fixed_args.clone();
+        all_args.extend_from_slice(new_args.as_slice());
+        let cmd = new_args.first().unwrap();
         // first level commands
         match cmd.as_str() {
             "quit" | "exit" => break,
             _ => {}
         }
         // second level commands
-        if run_subcommand(args.as_slice(), &mut gerrit).is_ok() {
+        if let Ok((action, vec)) = run_subcommand(all_args.as_slice(), &mut gerrit) {
+            if action == CmdRet::SetMode {
+                fixed_args = vec;
+                let mut prefix = String::new();
+                for a in &fixed_args {
+                    prefix.push_str(a);
+                }
+                cli::set_prefix(prefix.stylize());
+            }
             continue;
         }
         // registered command was not handled
@@ -124,6 +136,18 @@ fn main() -> std::io::Result<()> {
         print_exception(&mut writer, exception.as_str());
     }
     Ok(())
+}
+
+fn find_command<'a>(cmd_schema: &'a Command, inputs: &[String]) -> &'a Command {
+    let mut curr_cmd = cmd_schema;
+    for input in inputs {
+        let new_cmd = curr_cmd
+            .get_subcommands()
+            .find(|c| c.get_name() == input)
+            .unwrap();
+        curr_cmd = new_cmd;
+    }
+    curr_cmd
 }
 
 /// Get the `gerrit` command model/schema as a Clap command structure
@@ -141,21 +165,37 @@ fn command() -> Command {
         ])
 }
 
+#[derive(PartialEq)]
+enum CmdRet {
+    Ok,
+    SetMode,
+}
+
 /// Match prompt against subcommands.
 /// Run matched subcommand and return result.
-fn run_subcommand(args: &[String], gerrit: &mut GerritRestApi) -> Result<(), ()> {
+fn run_subcommand(
+    args: &[String],
+    gerrit: &mut GerritRestApi,
+) -> Result<(CmdRet, Vec<String>), ()> {
     if args.is_empty() {
-        return Ok(());
+        return Ok((CmdRet::Ok, vec![]));
     }
     let (cmd, args2) = args.split_first().unwrap();
-    match cmd.as_str() {
+    let ret = match cmd.as_str() {
         "remote" => remote_run_command(),
         "change" => change::run_command(args2, gerrit),
         "help" => {
             print_help(&mut cli::stdout(), &command());
-            Ok(())
+            Ok(CmdRet::Ok)
         }
         _ => Err(()),
+    };
+    let mut vec = Vec::new();
+    if let Ok(CmdRet::SetMode) = ret {
+        vec.extend_from_slice(args);
+        ret.map(move |a| (CmdRet::SetMode, vec))
+    } else {
+        ret.map(|a| (a, vec![]))
     }
 }
 
@@ -182,7 +222,7 @@ fn print_exception<D: Display>(writer: &mut impl Write, str: D) {
 
 /// Handle `remote` command.
 /// NOTE: Temporary function place.
-fn remote_run_command() -> Result<(), ()> {
+fn remote_run_command() -> Result<CmdRet, ()> {
     let mut stdout = cli::stdout();
     let url = std::env::var("GERRIT_URL");
     if let Ok(url) = url {
@@ -190,5 +230,5 @@ fn remote_run_command() -> Result<(), ()> {
     } else {
         cliprintln!(stdout, "no remotes configured").unwrap()
     }
-    Ok(())
+    Ok(CmdRet::Ok)
 }

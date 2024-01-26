@@ -15,7 +15,7 @@ use gerlib::changes::{
 use gerlib::GerritRestApi;
 
 use crate::cli::SmartNewLine;
-use crate::{cli, cliprintln, print_help};
+use crate::{cli, cliprintln, print_help, CmdRet};
 
 /// Get the `change` command model/schema as a Clap command structure
 pub fn command() -> Command {
@@ -24,6 +24,7 @@ pub fn command() -> Command {
         .disable_help_flag(true)
         .disable_help_subcommand(true)
         .subcommands([
+            Command::new("quit").alias("exit"),
             Command::new("help"),
             Command::new("show"),
             Command::new("list"),
@@ -32,28 +33,28 @@ pub fn command() -> Command {
 }
 
 /// Handle `change` command.
-pub fn run_command(args: &[String], gerrit: &mut GerritRestApi) -> Result<(), ()> {
+pub fn run_command(args: &[String], gerrit: &mut GerritRestApi) -> Result<CmdRet, ()> {
     let mut writer = cli::stdout();
     if args.is_empty() {
-        return list_changes(gerrit);
+        return Ok(CmdRet::SetMode);
     }
     let (cmd, _args2) = args.split_first().unwrap();
     match cmd.as_str() {
         "show" => {
             cliprintln!(writer, "Show changes").unwrap();
-            Ok(())
+            Ok(CmdRet::Ok)
         }
         "list" => list_changes(gerrit),
         "help" => {
             print_help(&mut writer, &command());
-            Ok(())
+            Ok(CmdRet::Ok)
         }
         _ => Err(()),
     }
 }
 
 /// Print out a list of changes.
-pub fn list_changes(gerrit: &mut GerritRestApi) -> Result<(), ()> {
+pub fn list_changes(gerrit: &mut GerritRestApi) -> Result<CmdRet, ()> {
     let mut writer = cli::stdout();
     let query_param = QueryParams {
         search_queries: Some(vec![QueryStr::Cooked(vec![
@@ -106,5 +107,5 @@ pub fn list_changes(gerrit: &mut GerritRestApi) -> Result<(), ()> {
         }
     }
     writer.flush().unwrap();
-    Ok(())
+    Ok(CmdRet::Ok)
 }

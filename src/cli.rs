@@ -355,10 +355,17 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                 let mut user_input_offset = 0;
                 let mut new_user_input = user_input.clone();
                 let user_input2 = user_input.clone();
+                let mut cmd_arg_given = false;
                 for (word_idx, word_input) in user_input2
                     .split_whitespace()
                     .map(|str| (str.as_ptr() as usize - user_input2.as_ptr() as usize, str))
                 {
+                    if curr_cmd_schema.get_arguments().next().is_some() {
+                        args.push(word_input.to_string());
+                        cmd_arg_given = true;
+                        continue;
+                    }
+
                     let word_input = word_input.to_string();
                     let has_end_whitespace = user_input2
                         .chars()
@@ -405,15 +412,21 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                         })
                         .unwrap();
                 }
-                if !args.is_empty() {
-                    execute!(writer, MoveToColumn(0)).unwrap();
+                execute!(writer, MoveToColumn(0)).unwrap();
+                print_prompt();
+                execute!(writer, Print(new_user_input.as_str())).unwrap();
+                // clear any previous line of command suggestions
+                execute!(writer, SmartNewLine(1), Clear(ClearType::CurrentLine)).unwrap();
+                history.add(new_user_input.trim().to_string());
+
+                if curr_cmd_schema.get_arguments().next().is_some() && !cmd_arg_given {
+                    cliprintln!(writer, "Missing argument");
                     print_prompt();
-                    execute!(writer, Print(new_user_input.as_str())).unwrap();
-                    // clear any previous line of command suggestions
-                    execute!(writer, SmartNewLine(1), Clear(ClearType::CurrentLine)).unwrap();
-                    history.add(new_user_input.trim().to_string());
-                    return Ok(args);
+                    user_input.clear();
+                    continue;
                 }
+
+                return Ok(args);
             }
 
             // CTRL + C

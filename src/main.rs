@@ -104,7 +104,7 @@ fn main() -> std::io::Result<()> {
     .ssl_verify(false)
     .unwrap();
 
-    let mut os_args = std::env::args().collect::<Vec<String>>()[1..].to_vec();
+    let os_args = std::env::args().collect::<Vec<String>>()[1..].to_vec();
     let mut handled_os_args = false;
 
     let cmd_schema_root = command();

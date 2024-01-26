@@ -1,5 +1,16 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
 use clap::Command;
+use crossterm::cursor::MoveToColumn;
+use crossterm::execute;
+use crossterm::style::Print;
+use crossterm::terminal::{Clear, ClearType};
 use trie_rs::{Trie, TrieBuilder};
+
+use crate::cli;
 
 /// Trait to add $create related functionally to Trie.
 pub trait TrieUtils {
@@ -73,4 +84,24 @@ pub fn find_command<'a>(cmd_schema: &'a Command, inputs: &[String]) -> &'a Comma
         curr_cmd = new_cmd;
     }
     curr_cmd
+}
+
+/// Print loading dots until atomic bool is made true.
+/// Useful for commands that take time and want to print some loading symbols to terminal meanwhile.
+pub fn loading() -> Arc<AtomicBool> {
+    let loading_done = Arc::new(AtomicBool::new(false));
+    thread::spawn({
+        let this_loading_done = loading_done.clone();
+        move || {
+            let mut writer = cli::stdout();
+            thread::sleep(Duration::from_millis(1000));
+            while !this_loading_done.load(Ordering::SeqCst) {
+                // TODO: BUG: the . dot may be printed just after this_loading_done is set to true
+                // and after the line is cleared.
+                execute!(writer, Print(".")).unwrap();
+                thread::sleep(Duration::from_millis(200));
+            }
+        }
+    });
+    loading_done
 }

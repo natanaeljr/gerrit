@@ -360,11 +360,12 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                     .split_whitespace()
                     .map(|str| (str.as_ptr() as usize - user_input2.as_ptr() as usize, str))
                 {
-                    if curr_cmd_schema.get_arguments().next().is_some() {
-                        args.push(word_input.to_string());
-                        cmd_arg_given = true;
-                        continue;
-                    }
+                    let cmd_arg = curr_cmd_schema.get_arguments().next();
+                    // if cmd_arg.is_some() {
+                    //     args.push(word_input.to_string());
+                    //     cmd_arg_given = true;
+                    //     continue;
+                    // }
 
                     let word_input = word_input.to_string();
                     let has_end_whitespace = user_input2
@@ -372,8 +373,13 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                         .nth(word_idx + word_input.len())
                         .map_or_else(|| false, |c| c.is_whitespace());
 
-                    // try to match input string against tree of commands
-                    let cmd_trie = util::get_command_trie(&curr_cmd_schema);
+                    // try to match input string against tree of commands or arguments
+                    let cmd_trie = if cmd_arg.is_some() {
+                        util::get_arg_values_trie(&cmd_arg.unwrap())
+                    } else {
+                        util::get_command_trie(&curr_cmd_schema)
+                    };
+
                     let cmd_matches = cmd_trie.collect_matches(&word_input);
                     if cmd_matches.is_empty() || (cmd_matches.len() > 1 && has_end_whitespace) {
                         queue!(writer, SmartNewLine(1)).unwrap();
@@ -405,12 +411,18 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
 
                     // command is final, process it now
                     args.push(cmd.clone());
-                    curr_cmd_schema = curr_cmd_schema
-                        .get_subcommands()
-                        .find(|c| {
-                            c.get_name() == cmd || c.get_all_aliases().find(|a| a == cmd) != None
-                        })
-                        .unwrap();
+
+                    if cmd_arg.is_some() {
+                        cmd_arg_given = true;
+                    } else {
+                        curr_cmd_schema = curr_cmd_schema
+                            .get_subcommands()
+                            .find(|c| {
+                                c.get_name() == cmd
+                                    || c.get_all_aliases().find(|a| a == cmd) != None
+                            })
+                            .unwrap();
+                    }
                 }
                 execute!(writer, MoveToColumn(0)).unwrap();
                 print_prompt();

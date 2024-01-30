@@ -3,11 +3,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use clap::Command;
-use crossterm::cursor::MoveToColumn;
+use clap::{Arg, Command};
 use crossterm::execute;
 use crossterm::style::Print;
-use crossterm::terminal::{Clear, ClearType};
 use trie_rs::{Trie, TrieBuilder};
 
 use crate::cli;
@@ -58,6 +56,30 @@ pub fn get_visible_command_vector(cmd_app: &Command) -> Vec<String> {
         vec.push(name);
         for alias in cmd.get_visible_aliases() {
             vec.push(alias.to_string());
+        }
+    }
+    vec
+}
+
+/// Return a prefix tree of possible values for an argument based on Arg created with Clap.
+/// One can use the command trie to make argument value predictions.
+pub fn get_arg_values_trie(arg: &Arg) -> Trie<u8> {
+    let mut builder = TrieBuilder::new();
+    for value in &arg.get_possible_values() {
+        for name_alias in value.get_name_and_aliases() {
+            builder.push(name_alias);
+        }
+    }
+    builder.build()
+}
+
+/// Return a vector of possible argument values based on Arg created with Clap.
+/// One can use the arg value vector to list all possible values.
+pub fn get_arg_values_vector(arg: &Arg) -> Vec<String> {
+    let mut vec = Vec::new();
+    for value in &arg.get_possible_values() {
+        for name_alias in value.get_name_and_aliases() {
+            vec.push(name_alias.to_string());
         }
     }
     vec

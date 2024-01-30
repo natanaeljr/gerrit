@@ -4,6 +4,7 @@ use std::ops::Not;
 use std::str::FromStr;
 use std::sync::atomic::Ordering;
 
+use clap::builder::PossibleValue;
 use clap::{Arg, Command};
 use crossterm::cursor::MoveToColumn;
 use crossterm::style::{Print, PrintStyledContent, Stylize};
@@ -38,7 +39,14 @@ pub fn command() -> Command {
                 .arg(Arg::new("ID").required(true))
                 .about("Display change info"),
             Command::new("query")
-                .arg(Arg::new("STRING").num_args(0..).last(true))
+                .arg(Arg::new("QUERY").num_args(0..).last(true).value_parser([
+                    PossibleValue::new("owner:self"),
+                    PossibleValue::new("is:open"),
+                    PossibleValue::new("is:wip"),
+                    PossibleValue::new("-owner:self"),
+                    PossibleValue::new("-is:open"),
+                    PossibleValue::new("-is:wip"),
+                ]))
                 .about("Query changes"),
             Command::new("help").alias("?").about("Print command help"),
             Command::new("exit").about("Exit from current mode"),

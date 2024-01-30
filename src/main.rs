@@ -81,6 +81,8 @@ mod util;
 ///       Example: echo -e 'change' | gerrit
 ///
 fn main() -> std::io::Result<()> {
+    pretty_env_logger::init_custom_env("GERRIT_LOG");
+
     let _cli_guard = cli::initialize();
     cli::set_prefix("gerrit".to_string().stylize());
     cli::set_symbol(">".to_string().green());

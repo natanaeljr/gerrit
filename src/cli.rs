@@ -419,7 +419,8 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                 execute!(writer, SmartNewLine(1), Clear(ClearType::CurrentLine)).unwrap();
                 history.add(new_user_input.trim().to_string());
 
-                if curr_cmd_schema.get_arguments().next().is_some() && !cmd_arg_given {
+                let cli_arg = curr_cmd_schema.get_arguments().next();
+                if cli_arg.is_some() && cli_arg.unwrap().is_required_set() && !cmd_arg_given {
                     cliprintln!(writer, "Missing argument");
                     print_prompt();
                     user_input.clear();

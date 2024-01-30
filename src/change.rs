@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::io::Write;
+use std::ops::Not;
 use std::str::FromStr;
 use std::sync::atomic::Ordering;
 
@@ -8,9 +9,7 @@ use crossterm::cursor::MoveToColumn;
 use crossterm::style::{Print, PrintStyledContent, Stylize};
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{execute, queue};
-use gerlib::changes::{
-    AdditionalOpt, ChangeEndpoints, ChangeInfo, Is, QueryOpr, QueryParams, QueryStr, SearchOpr,
-};
+use gerlib::changes::{AdditionalOpt, ChangeEndpoints, ChangeInfo, QueryParams, QueryStr};
 use gerlib::GerritRestApi;
 use once_cell::sync::Lazy;
 use parking_lot::ReentrantMutex;
@@ -38,8 +37,9 @@ pub fn command() -> Command {
             Command::new("show")
                 .arg(Arg::new("ID").required(true))
                 .about("Display change info"),
-            Command::new("list").about("List changes"),
-            Command::new("load").about("Load temporary command"),
+            Command::new("query")
+                .arg(Arg::new("STRING").num_args(0..).last(true))
+                .about("Query changes"),
             Command::new("help").alias("?").about("Print command help"),
             Command::new("exit").about("Exit from current mode"),
             Command::new("quit").about("Quit the program"),
@@ -55,7 +55,7 @@ pub fn run_command(args: &[String], gerrit: &mut GerritRestApi) -> Result<CmdAct
     let (cmd, cmd_args) = args.split_first().unwrap();
     match cmd.as_str() {
         "show" => show_change(cmd_args, gerrit),
-        "list" => list_changes(cmd_args, gerrit),
+        "query" => query_changes(cmd_args, gerrit),
         "help" | "?" => {
             print_help(&mut writer, &command());
             Ok(CmdAction::Ok)
@@ -65,19 +65,20 @@ pub fn run_command(args: &[String], gerrit: &mut GerritRestApi) -> Result<CmdAct
     }
 }
 
-/// Print out a list of changes.
-pub fn list_changes(_args: &[String], gerrit: &mut GerritRestApi) -> Result<CmdAction, ()> {
+/// Print out a list of changes from search query.
+pub fn query_changes(args: &[String], gerrit: &mut GerritRestApi) -> Result<CmdAction, ()> {
     let mut writer = cli::stdout();
+
     let query_param = QueryParams {
-        search_queries: Some(vec![QueryStr::Cooked(vec![
-            QueryOpr::Search(SearchOpr::Owner("Natanael.Rabello".to_string())),
-            QueryOpr::Search(SearchOpr::Is(Is::Open)),
-        ])]),
+        search_queries: args
+            .is_empty()
+            .not()
+            .then(|| vec![QueryStr::Raw(args.join(" "))]),
         additional_opts: Some(vec![
             AdditionalOpt::DetailedAccounts,
             AdditionalOpt::CurrentRevision,
         ]),
-        limit: Some(10),
+        limit: None,
         start: None,
     };
     let loading_done = util::loading();

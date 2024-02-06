@@ -38,20 +38,24 @@ pub fn command() -> Command {
             Command::new("show")
                 .arg(Arg::new("ID").required(true))
                 .about("Display change info"),
-            Command::new("query")
-                .arg(Arg::new("QUERY").num_args(0..).last(true).value_parser([
-                    PossibleValue::new("owner:self"),
-                    PossibleValue::new("is:open"),
-                    PossibleValue::new("is:wip"),
-                    PossibleValue::new("-owner:self"),
-                    PossibleValue::new("-is:open"),
-                    PossibleValue::new("-is:wip"),
-                ]))
-                .about("Query changes"),
+            command_query(),
             Command::new("help").alias("?").about("Print command help"),
             Command::new("exit").about("Exit from current mode"),
             Command::new("quit").about("Quit the program"),
         ])
+}
+
+pub fn command_query() -> Command {
+    Command::new("query").about("Query changes").arg(
+        Arg::new("QUERY").num_args(0..).last(true).value_parser([
+            PossibleValue::new("owner:self"),
+            PossibleValue::new("is:open"),
+            PossibleValue::new("is:wip"),
+            PossibleValue::new("-owner:self"),
+            PossibleValue::new("-is:open"),
+            PossibleValue::new("-is:wip"),
+        ]),
+    )
 }
 
 /// Handle `change` command.

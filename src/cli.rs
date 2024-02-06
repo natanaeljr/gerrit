@@ -296,42 +296,83 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                     continue;
                 }
 
-                let trimmed_input = user_input.trim().to_string();
-                let trimmed_input = trimmed_input.split_whitespace().next().unwrap().to_string();
-                let has_end_whitespace = trimmed_input.len() != user_input.trim_start().len();
-                if has_end_whitespace {
-                    continue;
+                let mut curr_cmd_schema = cmd_schema;
+                let mut user_input_offset = 0;
+                let mut new_user_input = user_input.clone();
+                let user_input2 = user_input.clone();
+                let mut cmd_arg_given = false;
+                for (word_idx, word_input) in user_input2
+                    .split_whitespace()
+                    .map(|str| (str.as_ptr() as usize - user_input2.as_ptr() as usize, str))
+                {
+                    let cmd_arg = curr_cmd_schema.get_arguments().next();
+
+                    let word_input = word_input.to_string();
+                    let has_end_whitespace = user_input2
+                        .chars()
+                        .nth(word_idx + word_input.len())
+                        .map_or_else(|| false, |c| c.is_whitespace());
+
+                    // try to match input string against tree of commands or arguments
+                    let cmd_trie = if cmd_arg.is_some() {
+                        util::get_arg_values_trie(&cmd_arg.unwrap())
+                    } else {
+                        util::get_command_trie(&curr_cmd_schema)
+                    };
+
+                    let cmd_matches = cmd_trie.collect_matches(&word_input);
+                    if cmd_matches.is_empty() {
+                        continue 'prompt_loop;
+                    }
+
+                    // if more than one match then suggest command completion
+                    if cmd_matches.len() > 1 && !has_end_whitespace {
+                        let col = cursor::position().unwrap().0;
+                        queue!(writer, SmartNewLine(1)).unwrap();
+                        print_command_completions(&mut writer, &cmd_matches);
+                        execute!(writer, MoveToPreviousLine(1), MoveToColumn(col)).unwrap();
+                        suggestion_printed_below = true;
+                        continue 'prompt_loop;
+                    }
+
+                    // else a full match is found
+                    let cmd = cmd_matches.last().unwrap();
+                    if word_input.len() < cmd.len() {
+                        let word_end_idx = word_idx + word_input.len() + user_input_offset;
+                        let cmd_remainder = cmd.split_at(word_input.len()).1;
+                        user_input_offset += cmd_remainder.len();
+                        new_user_input.insert_str(word_end_idx, cmd_remainder);
+                        // print_prompt_full_completion(&mut writer, &user_input, &word_input, &cmd);
+                    }
+
+                    // command is final, process it now
+
+                    if cmd_arg.is_some() {
+                        cmd_arg_given = true;
+                    } else {
+                        curr_cmd_schema = curr_cmd_schema
+                            .get_subcommands()
+                            .find(|c| {
+                                c.get_name() == cmd
+                                    || c.get_all_aliases().find(|a| a == cmd) != None
+                            })
+                            .unwrap();
+                    }
                 }
 
-                // try to match input string against tree of commands
-                let cmd_trie = util::get_command_trie(&cmd_schema);
-                let cmd_matches = cmd_trie.collect_matches(&trimmed_input);
-                if cmd_matches.is_empty() {
-                    continue;
-                }
-
-                // if more than one match then suggest command completion
-                if cmd_matches.len() > 1 && !has_end_whitespace {
+                if user_input.ends_with(" ") && curr_cmd_schema.get_subcommands().next().is_some() {
+                    let cmds = util::get_visible_command_vector(&curr_cmd_schema);
                     let col = cursor::position().unwrap().0;
                     queue!(writer, SmartNewLine(1)).unwrap();
-                    print_command_completions(&mut writer, &cmd_matches);
+                    print_command_completions(&mut writer, &cmds);
                     execute!(writer, MoveToPreviousLine(1), MoveToColumn(col)).unwrap();
                     suggestion_printed_below = true;
-                    continue;
-                }
-
-                // else a full match is found
-                let cmd = cmd_matches.last().unwrap();
-                if trimmed_input.len() < cmd.len() {
-                    print_prompt_full_completion(&mut writer, &user_input, &trimmed_input, &cmd);
-                    user_input.push_str(cmd.split_at(trimmed_input.len()).1);
-                }
-                execute!(writer, Print(" ")).unwrap();
-                user_input.push(' ');
-
-                if suggestion_printed_below {
-                    clear_line_below(&mut writer);
-                    suggestion_printed_below = false;
+                } else if user_input != new_user_input {
+                    execute!(writer, MoveToColumn(0)).unwrap();
+                    print_prompt();
+                    execute!(writer, Print(new_user_input.as_str())).unwrap();
+                    execute!(writer, Print(" ")).unwrap();
+                    user_input.push(' ');
                 }
             }
 
@@ -361,11 +402,6 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                     .map(|str| (str.as_ptr() as usize - user_input2.as_ptr() as usize, str))
                 {
                     let cmd_arg = curr_cmd_schema.get_arguments().next();
-                    // if cmd_arg.is_some() {
-                    //     args.push(word_input.to_string());
-                    //     cmd_arg_given = true;
-                    //     continue;
-                    // }
 
                     let word_input = word_input.to_string();
                     let has_end_whitespace = user_input2

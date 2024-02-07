@@ -38,6 +38,7 @@
 use std::cell::RefCell;
 use std::fmt;
 use std::io::{Stdout, Write};
+use std::ops::ControlFlow;
 use std::time::Duration;
 
 use crossterm::cursor::{
@@ -254,19 +255,23 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                 if !user_input.is_empty() {
                     let count: u16;
                     if modifiers == KeyModifiers::ALT {
-                        if let Some(idx) = user_input.rfind(" ") {
-                            // TODO: fix line wrap and overflow
-                            count = (user_input.len() - idx) as u16;
-                            _ = user_input.split_off(idx);
-                        } else {
-                            count = user_input.len() as u16;
-                            user_input.clear();
-                        }
+                        let index = util::str_rfind_last_word_separator(user_input.as_str());
+                        count = (user_input.len() - index) as u16;
+                        // execute!(
+                        //     writer,
+                        //     MoveDown(1),
+                        //     Print(format!("index {} count {}", index, count)),
+                        //     MoveUp(1)
+                        // )
+                        // .unwrap();
+                        _ = user_input.split_off(index);
                     } else {
                         user_input.pop();
                         count = 1;
                     }
-                    execute!(writer, MoveLeft(count), Clear(ClearType::UntilNewLine)).unwrap();
+                    if count > 0 {
+                        execute!(writer, MoveLeft(count), Clear(ClearType::UntilNewLine)).unwrap();
+                    }
                     if suggestion_printed_below {
                         clear_line_below(&mut writer);
                         suggestion_printed_below = false;
@@ -321,7 +326,12 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                     };
 
                     let cmd_matches = cmd_trie.collect_matches(&word_input);
-                    if cmd_matches.is_empty() {
+                    if cmd_matches.is_empty() || (cmd_matches.len() > 1 && has_end_whitespace) {
+                        let col = cursor::position().unwrap().0;
+                        queue!(writer, SmartNewLine(1)).unwrap();
+                        print_invalid_input(&mut writer, &word_input);
+                        execute!(writer, MoveToPreviousLine(2), MoveToColumn(col)).unwrap();
+                        suggestion_printed_below = true;
                         continue 'prompt_loop;
                     }
 
@@ -360,19 +370,31 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                     }
                 }
 
-                if user_input.ends_with(" ") && curr_cmd_schema.get_subcommands().next().is_some() {
-                    let cmds = util::get_visible_command_vector(&curr_cmd_schema);
+                if user_input.ends_with(" ")
+                    && (curr_cmd_schema.get_subcommands().next().is_some()
+                        || curr_cmd_schema.get_arguments().next().is_some())
+                {
+                    let cmds = if curr_cmd_schema.get_subcommands().next().is_some() {
+                        util::get_visible_command_vector(&curr_cmd_schema)
+                    } else {
+                        util::get_arg_values_vector(curr_cmd_schema.get_arguments().next().unwrap())
+                    };
                     let col = cursor::position().unwrap().0;
                     queue!(writer, SmartNewLine(1)).unwrap();
                     print_command_completions(&mut writer, &cmds);
                     execute!(writer, MoveToPreviousLine(1), MoveToColumn(col)).unwrap();
                     suggestion_printed_below = true;
-                } else if user_input != new_user_input {
+                    continue 'prompt_loop;
+                }
+
+                if user_input != new_user_input {
                     execute!(writer, MoveToColumn(0)).unwrap();
                     print_prompt();
                     execute!(writer, Print(new_user_input.as_str())).unwrap();
                     execute!(writer, Print(" ")).unwrap();
+                    user_input = new_user_input.clone();
                     user_input.push(' ');
+                    continue 'prompt_loop;
                 }
             }
 
@@ -421,7 +443,7 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                         queue!(writer, SmartNewLine(1)).unwrap();
                         print_invalid_input(&mut writer, &word_input);
                         print_prompt();
-                        history.add(word_input);
+                        history.add(new_user_input);
                         user_input.clear();
                         continue 'prompt_loop;
                     }
@@ -497,8 +519,10 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                 modifiers: KeyModifiers::CONTROL,
                 state: _,
             })) => {
-                execute!(writer, Print("^D"), SmartNewLine(1)).unwrap();
-                return Ok(vec![String::from("exit")]);
+                if user_input.is_empty() {
+                    execute!(writer, Print("^D"), SmartNewLine(1)).unwrap();
+                    return Ok(vec![String::from("exit")]);
+                }
             }
 
             // CTRL + L
@@ -620,4 +644,82 @@ fn print_invalid_input(writer: &mut impl Write, input: &str) {
         SmartNewLine(1)
     )
     .unwrap();
+}
+
+struct Prompt {
+    writer: Stdout,
+    history: HistoryHandle,
+    user_input: String,
+    last_prompt: Option<String>,
+    suggestion_printed_below: bool,
+}
+
+impl Prompt {
+    pub fn new() -> Self {
+        Self {
+            writer: stdout(),
+            history: HistoryHandle::get(),
+            user_input: String::new(),
+            last_prompt: None,
+            suggestion_printed_below: false,
+        }
+    }
+
+    pub fn prompt(&mut self) -> std::io::Result<Vec<String>> {
+        loop {
+            let control_flow = match event::read()? {
+                Event::Key(event) => self.key_event(event),
+                _ => ControlFlow::Continue(()),
+            };
+            if let ControlFlow::Break(input) = control_flow {
+                return Ok(input);
+            }
+        }
+    }
+
+    fn key_event(&mut self, event: KeyEvent) -> ControlFlow<Vec<String>> {
+        match event {
+            KeyEvent {
+                code: KeyCode::Backspace,
+                kind: KeyEventKind::Press,
+                ..
+            } => self.backspace(event),
+            _ => ControlFlow::Continue(()),
+        }
+    }
+
+    fn backspace(&mut self, event: KeyEvent) -> ControlFlow<Vec<String>> {
+        if self.user_input.is_empty() {
+            return ControlFlow::Continue(());
+        }
+        let num_of_chars_to_clear: u16;
+        if event.modifiers == KeyModifiers::ALT {
+            if let Some(idx) = self.user_input.rfind(" ") {
+                // TODO: fix line wrap and overflow
+                num_of_chars_to_clear = (self.user_input.len() - idx) as u16;
+                _ = self.user_input.split_off(idx);
+            } else {
+                num_of_chars_to_clear = self.user_input.len() as u16;
+                self.user_input.clear();
+            }
+        } else {
+            self.user_input.pop();
+            num_of_chars_to_clear = 1;
+        }
+        execute!(
+            self.writer,
+            MoveLeft(num_of_chars_to_clear),
+            Clear(ClearType::UntilNewLine)
+        )
+        .unwrap();
+        if self.suggestion_printed_below {
+            clear_line_below(&mut self.writer);
+            self.suggestion_printed_below = false;
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+pub fn prompt2(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
+    Prompt::new().prompt()
 }

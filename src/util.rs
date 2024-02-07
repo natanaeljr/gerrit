@@ -128,7 +128,7 @@ pub fn loading() -> Arc<AtomicBool> {
     loading_done
 }
 
-/// Find the index where the last occurrence of punctuation of whitespace is found.
+/// Find the index where the last occurrence of punctuation or whitespace is found.
 /// For examples see the test cases
 pub fn str_rfind_last_word_separator(str_original: &str) -> usize {
     let mut str = &str_original[..];
@@ -144,7 +144,7 @@ pub fn str_rfind_last_word_separator(str_original: &str) -> usize {
         // str="h-i-" , cursor=3, prev_cursor=5, (3<3), continue;
         // str="h-"   , cursor=1, prev_cursor=4, (1<2), break;
         if cursor < prev_cursor_after.saturating_sub(2) {
-            break_cursor = cursor;
+            break_cursor = cursor + 1;
             break;
         }
         prev_cursor_after = cursor + 1;
@@ -154,11 +154,7 @@ pub fn str_rfind_last_word_separator(str_original: &str) -> usize {
         0
     } else if prev_cursor_after == str_original.len() {
         // cover case "c " where last found symbol is last character
-        if break_cursor == 0 {
-            break_cursor
-        } else {
-            break_cursor + 1
-        }
+        break_cursor
     } else {
         // all other cases
         prev_cursor_after

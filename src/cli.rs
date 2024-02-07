@@ -424,6 +424,11 @@ pub fn prompt(cmd_schema: &clap::Command) -> std::io::Result<Vec<String>> {
                     .map(|str| (str.as_ptr() as usize - user_input2.as_ptr() as usize, str))
                 {
                     let cmd_arg = curr_cmd_schema.get_arguments().next();
+                    if cmd_arg.is_some() && cmd_arg.unwrap().get_possible_values().is_empty() {
+                        args.push(word_input.to_string());
+                        cmd_arg_given = true;
+                        continue;
+                    }
 
                     let word_input = word_input.to_string();
                     let has_end_whitespace = user_input2
